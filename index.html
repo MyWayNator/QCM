@@ -297,6 +297,11 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
     <div><h2>Réglages</h2><p class="muted">Ces réglages s'appliquent à toutes les évaluations et séances de cet appareil.</p></div>
     <div class="tablewrap"><table><tbody>
       <tr><th style="white-space:normal">Suppression automatique des photos des copies</th><td><input type="number" id="set-retention" min="1" max="365" step="1"> jours après la dernière correction</td></tr>
+      <tr><th style="white-space:normal">Export Pronote : encodage</th><td><select id="set-enc"><option value="windows-1252">Windows-1252 (validé avec Pronote Client)</option><option value="utf-8">UTF-8</option></select></td></tr>
+      <tr><th style="white-space:normal">Export Pronote : séparateur</th><td><select id="set-sep"><option value=";">point-virgule ;</option><option value="	">tabulation</option><option value=",">virgule ,</option></select></td></tr>
+      <tr><th style="white-space:normal">Export Pronote : décimales</th><td><select id="set-dec"><option value=",">virgule (12,5)</option><option value=".">point (12.5)</option></select></td></tr>
+      <tr><th style="white-space:normal">Export Pronote : en-tête</th><td><label><input type="checkbox" id="set-head"> ligne « Nom ; Prénom ; Note » en tête du fichier</label></td></tr>
+      <tr><th style="white-space:normal">Export Pronote : élève absent</th><td><input type="text" id="set-abs" maxlength="8" style="width:6em" placeholder="vide"> <span class="small muted">laisser vide, ou un code reconnu par Pronote (ex. Abs)</span></td></tr>
       <tr><th style="white-space:normal">Mode de correction des nouvelles séances</th><td><select id="set-mode"><option value="mixte">Mixte : seules les copies incertaines sont à vérifier</option><option value="validation">Validation de chaque copie</option></select></td></tr>
     </tbody></table></div>
     <p class="small muted">À la clôture d'une séance (à la main, ou automatiquement après ce délai), les photos sont supprimées de l'appareil. Les réponses lues et les notes restent. Les photos ne sont jamais incluses dans les sauvegardes.</p>
@@ -1117,6 +1122,45 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
     return { n, changed };
   }
 
+  // ---------- 5 bis. Export Pronote (§13) ----------
+  const CP1252_EXTRA = { 0x20AC: 0x80, 0x201A: 0x82, 0x0192: 0x83, 0x201E: 0x84, 0x2026: 0x85, 0x2020: 0x86, 0x2021: 0x87, 0x02C6: 0x88, 0x2030: 0x89, 0x0160: 0x8A, 0x2039: 0x8B, 0x0152: 0x8C, 0x017D: 0x8E,
+    0x2018: 0x91, 0x2019: 0x92, 0x201C: 0x93, 0x201D: 0x94, 0x2022: 0x95, 0x2013: 0x96, 0x2014: 0x97, 0x02DC: 0x98, 0x2122: 0x99, 0x0161: 0x9A, 0x203A: 0x9B, 0x0153: 0x9C, 0x017E: 0x9E, 0x0178: 0x9F };
+  /** Encode en Windows-1252 (les navigateurs ne savent écrire que l'UTF-8). Un caractère absent de la table perd son accent, sinon devient « ? ». */
+  function encodeCP1252(str) {
+    const out = [];
+    for (const ch of str) {
+      const c = ch.codePointAt(0);
+      if (c < 0x80 || (c >= 0xA0 && c <= 0xFF)) out.push(c);
+      else if (CP1252_EXTRA[c]) out.push(CP1252_EXTRA[c]);
+      else if ('ŁłĐđıȘșȚț'.includes(ch)) out.push('LlDdiSsTt'.charCodeAt('ŁłĐđıȘșȚț'.indexOf(ch)));
+      else { const base = ch.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); for (const b of base) { const k = b.codePointAt(0); out.push(k < 0x80 || (k >= 0xA0 && k <= 0xFF) ? k : 0x3F); } }
+    }
+    return new Uint8Array(out);
+  }
+  const EXPORT_DEFAULTS = { sep: ';', decimal: ',', header: true, encoding: 'windows-1252', absent: '' };
+  const exportSettings = state => Object.assign({}, EXPORT_DEFAULTS, (state.settings || {}).export || {});
+  /** Lignes Nom ; Prénom ; Note d'une séance, avec les signalements (non bloquants). */
+  function pronoteRows(Q, state, ses, students) {
+    const ev = state.evaluations[ses.evalId], o = exportSettings(state);
+    const seen = {};
+    return students.map(s => {
+      const k = studentStatus(state, ses, s.id), r = state.results[resultId(ses.id, s.id)];
+      const sc = r && ev ? scoreResult(Q, ev, r) : null;
+      const key = norm(s.nom) + '|' + norm(s.prenom); seen[key] = (seen[key] || 0) + 1;
+      let note = '';
+      if (sc) note = String(Math.round(sc.note * 100) / 100).replace('.', o.decimal);
+      else if (k === 'absent') note = o.absent;
+      return { s, status: k, note, value: sc ? sc.note : null, key };
+    }).map((x, i, all) => Object.assign(x, { homonym: all.filter(y => y.key === x.key).length > 1 }));
+  }
+  function pronoteCsv(state, rows) {
+    const o = exportSettings(state);
+    const q = v => (String(v).includes(o.sep) || String(v).includes('"')) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
+    const lines = (o.header ? [['Nom', 'Prénom', 'Note']] : []).concat(rows.map(x => [x.s.nom, x.s.prenom, x.note]));
+    const text = lines.map(l => l.map(q).join(o.sep)).join('\r\n') + '\r\n';
+    return o.encoding === 'utf-8' ? new TextEncoder().encode('\uFEFF' + text) : encodeCP1252(text);
+  }
+
   // ---------- 6. Sauvegardes ----------
   function makeBackup(state) {
     const copy = JSON.parse(JSON.stringify(state));
@@ -1205,7 +1249,7 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
   async function listSnapshots() { try { return (await kvGet('snapshots')) || []; } catch (e) { return []; } }
 
   root.QCMData = { emptyState, decodeText, parseCSV, detectColumns, planImport, applyImport, classesOf, compareClasses, level, displayFirst,
-    sessionFor, resultId, sessionResults, scoreResult, studentStatus, refreshNotes, settings, putImage, getImage, delImage, closeSession,
+    encodeCP1252, exportSettings, pronoteRows, pronoteCsv, sessionFor, resultId, sessionResults, scoreResult, studentStatus, refreshNotes, settings, putImage, getImage, delImage, closeSession,
     newEvaluation, listEvaluations, versionLabels, readyLabels, snapshot, listSnapshots, nextLabel, finalGrade, propagateLayout, versionFromReading, matchVersionBoxes, versionFromMatch,
     makeBackup, planRestore, duplicates, excludeStudent, markDistinct, applyRestore, load, save, newId, norm, FORMAT };
   if (typeof module !== 'undefined') module.exports = root.QCMData;
@@ -1984,7 +2028,7 @@ function renderSessionList() {
   }).join('') : '<p class="muted small">Aucune séance pour l\'instant. Elle se crée toute seule à la lecture du premier QR code d\'une classe.</p>');
 }
 $('cor-list').addEventListener('click', e => { const b = e.target.closest('[data-ses]'); if (b) openSession(b.dataset.ses); });
-function openSession(id) { cor.view = 'session'; cor.sessionId = id; cor.queue = null; cor.closeArmed = false; show('correction'); window.scrollTo({ top: 0 }); }
+function openSession(id) { cor.view = 'session'; cor.sessionId = id; cor.queue = null; cor.closeArmed = false; cor.exportOpen = false; show('correction'); window.scrollTo({ top: 0 }); }
 
 function renderSession() {
   const ses = app.state.sessions[cor.sessionId]; if (!ses) { cor.view = 'list'; return renderCorrection(); }
@@ -2002,6 +2046,25 @@ function renderSession() {
       : '<button class="btn small" type="button" data-absent="' + s.id + '">' + (k === 'absent' ? 'Présent' : 'Absent') + '</button><button class="btn small" type="button" data-manual="' + s.id + '">Saisir à la main</button>';
     return '<div class="q" style="grid-template-columns:1fr auto;align-items:center"><div class="body" style="gap:4px"><div class="line"><b>' + eh(s.nom + ' ' + D.displayFirst(s)) + '</b>' + pill(k) + note + (s.classe !== ses.classe ? '<span class="small muted">(maintenant en ' + eh(s.classe) + ')</span>' : '') + '</div></div><div class="actions">' + acts + '</div></div>';
   }).join('') + '</div>';
+  // export Pronote
+  const rows = D.pronoteRows(Q, app.state, ses, studs);
+  const stale = ses.exported && rows.some(x => (ses.exported.notes[x.s.id] ?? '') !== x.note);
+  h += '<div style="display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--rule);padding-top:12px"><h3>Export vers Pronote</h3>' +
+    (ses.exported ? '<p class="small ' + (stale ? '' : 'muted') + '">' + (stale ? '<b style="color:var(--doubt)">Des notes ont changé depuis le dernier export</b> (' + fmtDay(ses.exported.date) + ') : exportez à nouveau.' : 'Exporté le ' + fmtDay(ses.exported.date) + '.') + '</p>' : '') +
+    '<div class="actions"><button class="btn' + (ses.exported && !stale ? '' : ' primary') + '" type="button" data-act="export">' + (cor.exportOpen ? 'Masquer l\'aperçu' : 'Préparer le fichier') + '</button></div>';
+  if (cor.exportOpen) {
+    const o = D.exportSettings(app.state), warn = [];
+    const nCheck = rows.filter(x => x.status === 'check').length, nTodo = rows.filter(x => x.status === 'todo' || x.status === 'rescan').length, nHom = rows.filter(x => x.homonym).length;
+    if (nCheck) warn.push(nCheck > 1 ? nCheck + ' copies ne sont pas encore vérifiées : leur note est exportée telle quelle' : '1 copie n\'est pas encore vérifiée : sa note est exportée telle quelle');
+    if (nTodo) warn.push(plural(nTodo, 'élève n\'a pas de note', 'élèves n\'ont pas de note') + ' (à corriger ou à rescanner) : case vide');
+    if (nHom) warn.push('homonymes dans la classe : vérifiez-les à l\'import dans Pronote');
+    h += (warn.length ? '<div class="note doubt small">' + warn.map(w => '• ' + w).join('<br>') + '</div>' : '') +
+      '<div class="tablewrap"><table><thead><tr><th>Nom</th><th>Prénom</th><th class="num">Note</th><th></th></tr></thead><tbody>' +
+      rows.map(x => '<tr><td>' + eh(x.s.nom) + '</td><td>' + eh(x.s.prenom) + '</td><td class="num">' + (eh(x.note) || '<span class="muted">—</span>') + '</td><td>' + (x.status === 'ok' ? '' : pill(x.status)) + (x.homonym ? ' <span class="pill doubt">homonyme</span>' : '') + '</td></tr>').join('') + '</tbody></table></div>' +
+      '<p class="small muted">Fichier ' + (o.encoding === 'utf-8' ? 'UTF-8' : 'Windows-1252') + ', séparateur « ' + (o.sep === '\t' ? 'tabulation' : o.sep) + ' », décimales « ' + o.decimal + ' »' + (o.header ? ', avec une ligne d\'en-tête' : '') + (o.absent ? ', absents notés « ' + eh(o.absent) + ' »' : '') + '. Modifiable dans Réglages.</p>' +
+      '<div class="actions"><button class="btn primary" type="button" data-act="save-csv">Enregistrer le fichier pour Pronote</button></div><div id="exp-msg"></div>';
+  }
+  h += '</div>';
   h += '<div class="actions">' + (ses.closed ? '<button class="btn" type="button" data-act="reopen">Rouvrir la séance</button>'
     : '<button class="btn" type="button" data-act="close">' + (cor.closeArmed ? 'Confirmer : supprimer les photos et clore' : 'Clore la séance') + '</button>') + '</div>' +
     '<p class="small muted">Clore la séance supprime les photos des copies ; les réponses et les notes restent. Sans action de votre part, elle se clôt ' + D.settings(app.state).retentionDays + ' jours après la dernière correction.</p>';
@@ -2019,6 +2082,18 @@ $('cor-session').addEventListener('click', async e => {
   if (act === 'close') {
     if (!cor.closeArmed) { cor.closeArmed = true; renderSession(); setTimeout(() => { cor.closeArmed = false; if (cor.view === 'session') renderSession(); }, 4000); return; }
     cor.closeArmed = false; await D.closeSession(app.state, ses); await persist(); renderCorrection(); return;
+  }
+  if (act === 'export') { cor.exportOpen = !cor.exportOpen; renderSession(); return; }
+  if (act === 'save-csv') {
+    const ev = sesEval(ses), rows = D.pronoteRows(Q, app.state, ses, sessionStudents(ses));
+    const bytes = D.pronoteCsv(app.state, rows), o = D.exportSettings(app.state);
+    const name = ((ev ? ev.name : 'notes') + ' - ' + ses.classe).replace(/#/g, '').replace(/[^\p{L}\p{N} ()'.,_-]+/gu, '-').replace(/-(\s*-)+/g, '-').replace(/\s+/g, ' ').trim() + '.csv';
+    const how = await saveBlob(new Blob([bytes], { type: o.encoding === 'utf-8' ? 'text/csv' : 'text/csv;charset=windows-1252' }), name);
+    if (how === 'cancel') return;
+    ses.exported = { date: new Date().toISOString(), notes: Object.fromEntries(rows.map(x => [x.s.id, x.note])) };
+    await persist(); renderSession();
+    msg('exp-msg', 'ok', '<b>' + eh(name) + '</b> ' + (how === 'shared' ? 'envoyé.' : 'téléchargé.') + ' Dans Pronote, importez-le dans le devoir : associez les colonnes Nom, Prénom et Note' + (D.exportSettings(app.state).header ? ' et ignorez la première ligne.' : '.'));
+    return;
   }
   if (act === 'reopen') { ses.closed = null; ses.updated = new Date().toISOString(); await persist(); renderCorrection(); return; }
   if (b.dataset.open) return openCopy(b.dataset.open);
@@ -2226,9 +2301,21 @@ $('cor-inbox').addEventListener('click', async e => {
 function renderSettings() {
   const S = D.settings(app.state);
   $('set-retention').value = S.retentionDays; $('set-mode').value = S.defaultMode;
+  const E = D.exportSettings(app.state);
+  $('set-enc').value = E.encoding; $('set-sep').value = E.sep; $('set-dec').value = E.decimal; $('set-head').checked = E.header; $('set-abs').value = E.absent;
   $('set-measure-ses').innerHTML = listSessions().map(x => '<option value="' + x.id + '">' + eh(sesTitle(x)) + ' (' + fmtDay(x.created) + ')</option>').join('') || '<option value="">Aucune séance</option>';
 }
 $('set-retention').addEventListener('change', e => { app.state.settings = Object.assign(D.settings(app.state), { retentionDays: Math.min(365, Math.max(1, Math.round(+e.target.value || 30))) }); persistSoon(); renderSettings(); });
+function setExport(k, v) {
+  const E = D.exportSettings(app.state); E[k] = v;
+  if (E.sep === ',' && E.decimal === ',') { E.sep = ';'; msg('log-msg', 'doubt', 'Avec des décimales à virgule, le séparateur reste le point-virgule.'); }
+  app.state.settings = Object.assign(D.settings(app.state), { export: E }); persistSoon(); renderSettings();
+}
+$('set-enc').addEventListener('change', e => setExport('encoding', e.target.value));
+$('set-sep').addEventListener('change', e => setExport('sep', e.target.value));
+$('set-dec').addEventListener('change', e => setExport('decimal', e.target.value));
+$('set-head').addEventListener('change', e => setExport('header', e.target.checked));
+$('set-abs').addEventListener('change', e => setExport('absent', e.target.value.trim()));
 $('set-mode').addEventListener('change', e => { app.state.settings = Object.assign(D.settings(app.state), { defaultMode: e.target.value }); persistSoon(); });
 $('btn-copy-log').addEventListener('click', () => {
   const ses = app.state.sessions[$('set-measure-ses').value]; if (!ses) return;
