@@ -10,7 +10,7 @@
 <style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:light}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style>
 </head>
 <body>
-<title>Banc d'essai QCM</title>
+<title>Correcteur QCM</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=JetBrains+Mono:wght@400;600&display=swap">
@@ -136,10 +136,11 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
 <header class="top">
   <div class="wrap">
     <div class="brand">
-      <h1>Banc d'essai QCM</h1>
+      <h1>Correcteur QCM</h1>
       <span class="engine" id="engine">Chargement du moteur d'analyse (≈ 13 Mo, une seule fois)…</span>
     </div>
     <nav class="tabs" role="tablist">
+      <button role="tab" id="tab-eleves" aria-selected="false" data-view="eleves">Élèves</button>
       <button role="tab" id="tab-modele" aria-selected="true" data-view="modele">Modèle</button>
       <button role="tab" id="tab-copies" aria-selected="false" data-view="copies">Copies</button>
       <button role="tab" id="tab-bilan" aria-selected="false" data-view="bilan">Bilan<span class="count" id="bilan-count">0</span></button>
@@ -148,6 +149,39 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
 </header>
 
 <main class="wrap">
+  <!-- ====================== ÉLÈVES ====================== -->
+  <section class="view" id="view-eleves" hidden>
+    <div>
+      <h2>Classes et élèves</h2>
+      <p class="muted" id="el-summary">Aucun élève pour l'instant.</p>
+    </div>
+    <div id="el-backup-warn"></div>
+
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <h3>Importer la liste des élèves</h3>
+      <p class="muted small">Fichier CSV exporté depuis le tableur (point-virgule, UTF-8 ou Windows-1252). Un nouvel import met la liste à jour sans effacer les résultats.</p>
+      <div class="actions">
+        <label class="btn primary" for="in-csv">Choisir le fichier CSV<input type="file" id="in-csv" accept=".csv,.txt,text/csv,text/plain"></label>
+      </div>
+    </div>
+    <div id="imp-zone" hidden style="display:flex;flex-direction:column;gap:12px"></div>
+
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <h3>Classes</h3>
+      <div id="el-classes" class="qlist"><p class="muted small">Importez un fichier pour voir les classes.</p></div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <h3>Sauvegarde</h3>
+      <p class="muted small">Les données restent sur ce téléphone. Enregistrez régulièrement une sauvegarde dans votre Nuage : le téléphone seul ne suffit pas.</p>
+      <div class="actions">
+        <button class="btn primary" type="button" id="btn-backup">Enregistrer une sauvegarde</button>
+        <label class="btn" for="in-restore">Restaurer une sauvegarde<input type="file" id="in-restore" accept=".json,application/json"></label>
+      </div>
+      <div id="bk-zone"></div>
+    </div>
+  </section>
+
   <!-- ====================== MODÈLE ====================== -->
   <section class="view" id="view-modele">
     <div>
@@ -728,6 +762,227 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
   if (typeof module !== 'undefined') module.exports = root.QCMCore;
 })(typeof self !== 'undefined' ? self : globalThis);
 </script>
+<script>/* Données de l'application : élèves, classes, import CSV, sauvegardes.
+   Fonctions pures (testables sous Node) + petit stockage IndexedDB côté navigateur. */
+(function (root) {
+  'use strict';
+
+  const FORMAT = 1;
+
+  // ---------- outils ----------
+  const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const key = (nom, prenom) => norm(nom) + '|' + norm(prenom);
+  function newId() {
+    // 8 caractères sans ambiguïté (pas de 0/O, 1/I/L) : court pour tenir dans un petit QR code
+    const A = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+    const r = new Uint8Array(8);
+    (root.crypto || require('crypto').webcrypto).getRandomValues(r);
+    return Array.from(r, v => A[v % A.length]).join('');
+  }
+  const nowIso = () => new Date().toISOString();
+
+  // ---------- état vide ----------
+  function emptyState() {
+    return { app: 'qcm', format: FORMAT, created: nowIso(), students: {}, imports: [], lastBackup: null,
+      evaluations: {}, sessions: {}, results: {} };
+  }
+
+  // ---------- 1. Lecture du fichier ----------
+  /** Décode un fichier texte : UTF-8 si valide, sinon Windows-1252. */
+  function decodeText(buf) {
+    const bytes = new Uint8Array(buf);
+    try {
+      const t = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      return { text: t.replace(/^﻿/, ''), encoding: 'UTF-8' };
+    } catch (e) {
+      return { text: new TextDecoder('windows-1252').decode(bytes), encoding: 'Windows-1252' };
+    }
+  }
+
+  /** Analyse un CSV (guillemets gérés). Séparateur détecté sur la première ligne : ; , ou tabulation. */
+  function parseCSV(text) {
+    const first = text.split(/\r?\n/, 1)[0] || '';
+    const count = ch => first.split(ch).length - 1;
+    const sep = [';', '\t', ','].reduce((best, c) => count(c) > count(best) ? c : best, ';');
+    const rows = []; let row = [], cell = '', q = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (q) {
+        if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; }
+        else cell += c;
+      } else if (c === '"') q = true;
+      else if (c === sep) { row.push(cell); cell = ''; }
+      else if (c === '\n' || c === '\r') {
+        if (c === '\r' && text[i + 1] === '\n') i++;
+        row.push(cell); rows.push(row); row = []; cell = '';
+      } else cell += c;
+    }
+    if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+    const clean = rows.map(r => r.map(v => v.trim())).filter(r => r.some(v => v !== ''));
+    return { sep, header: clean[0] || [], rows: clean.slice(1) };
+  }
+
+  /** Associe les colonnes aux champs connus. Retourne { nom, prenom, usage, classe, naissance, sexe } (index ou -1). */
+  function detectColumns(header) {
+    const h = header.map(x => norm(x).replace(/ /g, ''));
+    const find = (...pats) => h.findIndex(x => pats.some(p => p.test(x)));
+    const usage = find(/^prenomd?usage$/, /usage/);
+    const prenom = h.findIndex((x, i) => i !== usage && /^prenom/.test(x));
+    return {
+      nom: find(/^nom$/, /^nomdefamille$/, /^nomdusage$/, /^nom/),
+      prenom,
+      usage,
+      classe: find(/^classe$/, /^classe/, /^division$/),
+      naissance: find(/^nee?le$/, /^nee?e?le$/, /naissance/),
+      sexe: find(/^sexe$/, /^genre$/)
+    };
+  }
+
+  // ---------- 2. Plan d'import ----------
+  /** Compare le fichier au référentiel. Rien n'est modifié ici. */
+  function planImport(state, parsed, cols) {
+    const get = (r, i) => (i >= 0 ? (r[i] || '').trim() : '');
+    const lines = parsed.rows.map((r, n) => ({
+      line: n + 2, nom: get(r, cols.nom), prenom: get(r, cols.prenom), usage: get(r, cols.usage), classe: get(r, cols.classe)
+    })).filter(l => l.nom || l.prenom);
+
+    const existing = Object.values(state.students);
+    const byKey = {};
+    for (const s of existing) (byKey[key(s.nom, s.prenom)] = byKey[key(s.nom, s.prenom)] || []).push(s);
+
+    const plan = { create: [], move: [], same: [], noClass: [], ambiguous: [], missing: [], duplicatesInFile: [], homonyms: [] };
+    const seen = new Set(), fileKeys = {};
+    for (const l of lines) {
+      const k = key(l.nom, l.prenom);
+      (fileKeys[k] = fileKeys[k] || []).push(l);
+      if (!l.classe) plan.noClass.push(l);
+      let cands = byKey[k] || [];
+      cands = cands.filter(s => !seen.has(s.id));
+      let match = null;
+      if (cands.length === 1) match = cands[0];
+      else if (cands.length > 1) {
+        const sameClass = cands.filter(s => s.classe === l.classe);
+        if (sameClass.length === 1) match = sameClass[0];
+        else { plan.ambiguous.push(l); continue; }
+      }
+      if (!match) plan.create.push(l);
+      else {
+        seen.add(match.id);
+        const changed = match.classe !== l.classe || (match.usage || '') !== l.usage || !match.active;
+        (changed ? plan.move : plan.same).push(Object.assign({ id: match.id, from: match.active ? match.classe : '(retiré)' }, l));
+      }
+    }
+    for (const s of existing) if (s.active && !seen.has(s.id)) plan.missing.push(s);
+    // homonymes dans une même classe (signalés, non bloquants — §13)
+    const byClassName = {};
+    for (const l of lines) { const k = l.classe + '#' + key(l.nom, l.prenom); (byClassName[k] = byClassName[k] || []).push(l); }
+    for (const g of Object.values(byClassName)) if (g.length > 1) plan.homonyms.push(g);
+    plan.total = lines.length;
+    plan.classes = [...new Set(lines.map(l => l.classe).filter(Boolean))].sort(compareClasses);
+    return plan;
+  }
+
+  /** Applique le plan. Les élèves absents du fichier sont seulement retirés des listes, jamais supprimés. */
+  function applyImport(state, plan, opts = {}) {
+    const t = nowIso();
+    for (const l of plan.create) {
+      let id; do id = newId(); while (state.students[id]);
+      state.students[id] = { id, nom: l.nom, prenom: l.prenom, usage: l.usage, classe: l.classe, active: true,
+        history: [{ classe: l.classe, from: t }], created: t, updated: t };
+    }
+    for (const l of plan.move) {
+      const s = state.students[l.id];
+      if (s.classe !== l.classe || !s.active) s.history.push({ classe: l.classe, from: t });
+      Object.assign(s, { classe: l.classe, usage: l.usage, active: true, updated: t });
+    }
+    if (opts.retireMissing !== false) for (const m of plan.missing) {
+      const s = state.students[m.id]; s.active = false; s.updated = t;
+    }
+    state.imports.push({ date: t, total: plan.total, created: plan.create.length, moved: plan.move.length, retired: opts.retireMissing !== false ? plan.missing.length : 0 });
+    return state;
+  }
+
+  // ---------- 3. Classes ----------
+  /** Tri des classes : 6e, 5e, 4e, 3e, puis le reste par ordre alphabétique. */
+  function level(c) { const m = /^\s*([3-6])/.exec(c || ''); return m ? m[1] : ''; }
+  function compareClasses(a, b) {
+    const la = level(a), lb = level(b);
+    if (la !== lb) return (lb || '0') - (la || '0');
+    return a.localeCompare(b, 'fr');
+  }
+  function classesOf(state) {
+    const m = {};
+    for (const s of Object.values(state.students)) if (s.active) (m[s.classe || ''] = m[s.classe || ''] || []).push(s);
+    for (const k in m) m[k].sort((a, b) => a.nom.localeCompare(b.nom, 'fr') || a.prenom.localeCompare(b.prenom, 'fr'));
+    return Object.keys(m).sort(compareClasses).map(c => ({ classe: c, level: level(c), students: m[c] }));
+  }
+  const displayFirst = s => s.usage || s.prenom;
+
+  // ---------- 4. Sauvegardes ----------
+  function makeBackup(state) {
+    const copy = JSON.parse(JSON.stringify(state));
+    copy.backupDate = nowIso();
+    return JSON.stringify(copy);
+  }
+  /** Lit une sauvegarde et prépare la fusion (rien n'est écrasé ni supprimé). */
+  function planRestore(state, text) {
+    let b;
+    try { b = JSON.parse(text); } catch (e) { return { error: 'Ce fichier n\'est pas une sauvegarde lisible.' }; }
+    if (!b || b.app !== 'qcm' || !b.students) return { error: 'Ce fichier n\'est pas une sauvegarde de l\'application QCM.' };
+    if (b.format > FORMAT) return { error: 'Cette sauvegarde vient d\'une version plus récente de l\'application. Mettez l\'application à jour.' };
+    const p = { backup: b, add: [], update: [], keep: 0, collections: {} };
+    for (const s of Object.values(b.students)) {
+      const cur = state.students[s.id];
+      if (!cur) p.add.push(s);
+      else if ((s.updated || '') > (cur.updated || '')) p.update.push(s);
+      else p.keep++;
+    }
+    for (const c of ['evaluations', 'sessions', 'results']) {
+      const src = b[c] || {}, dst = state[c] || {};
+      p.collections[c] = { add: Object.keys(src).filter(k => !dst[k]).length, update: Object.keys(src).filter(k => dst[k] && (src[k].updated || '') > (dst[k].updated || '')).length };
+    }
+    return p;
+  }
+  function applyRestore(state, p) {
+    const b = p.backup;
+    for (const s of p.add.concat(p.update)) state.students[s.id] = s;
+    for (const c of ['evaluations', 'sessions', 'results']) {
+      const src = b[c] || {}; state[c] = state[c] || {};
+      for (const k in src) if (!state[c][k] || (src[k].updated || '') > (state[c][k].updated || '')) state[c][k] = src[k];
+    }
+    state.imports = (state.imports || []).concat((b.imports || []).filter(i => !(state.imports || []).some(j => j.date === i.date)));
+    return state;
+  }
+
+  // ---------- 5. Stockage (navigateur) ----------
+  const DB = 'qcm-app', STORE = 'kv';
+  function idb() {
+    return new Promise((res, rej) => {
+      const r = indexedDB.open(DB, 1);
+      r.onupgradeneeded = () => r.result.createObjectStore(STORE);
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    });
+  }
+  async function load() {
+    try {
+      const db = await idb();
+      const v = await new Promise((res, rej) => { const q = db.transaction(STORE).objectStore(STORE).get('state'); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); });
+      return { state: v || emptyState(), persistent: true };
+    } catch (e) { return { state: emptyState(), persistent: false }; }
+  }
+  async function save(state) {
+    try {
+      const db = await idb();
+      await new Promise((res, rej) => { const tx = db.transaction(STORE, 'readwrite'); tx.objectStore(STORE).put(state, 'state'); tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+      return true;
+    } catch (e) { return false; }
+  }
+
+  root.QCMData = { emptyState, decodeText, parseCSV, detectColumns, planImport, applyImport, classesOf, compareClasses, level, displayFirst,
+    makeBackup, planRestore, applyRestore, load, save, newId, norm, FORMAT };
+  if (typeof module !== 'undefined') module.exports = root.QCMData;
+})(typeof self !== 'undefined' ? self : globalThis);
+</script>
 <script src="https://cdn.jsdelivr.net/npm/@techstark/opencv-js@5.0.0-release.1/dist/opencv.js" async id="cv-script"></script>
 <script>
 (function () {
@@ -756,7 +1011,7 @@ const store = {
 // ---------------- onglets ----------------
 function show(view) {
   for (const b of document.querySelectorAll('nav.tabs button')) b.setAttribute('aria-selected', String(b.dataset.view === view));
-  for (const v of ['modele', 'copies', 'bilan']) $('view-' + v).hidden = v !== view;
+  for (const v of ['eleves', 'modele', 'copies', 'bilan']) $('view-' + v).hidden = v !== view;
   if (view === 'bilan') renderLog();
   window.scrollTo({ top: 0 });
 }
@@ -1176,8 +1431,115 @@ $('btn-clear-log').addEventListener('click', () => {
   st.log = []; renderCount(); renderLog(); msg('log-msg', '', '');
 });
 
+// ---------------- ÉLÈVES ----------------
+const D = window.QCMData;
+const app = { state: D.emptyState(), stored: false, imp: null, bk: null };
+const eh = escapeHtml;
+async function persist() { app.stored = await D.save(app.state); renderEleves(); }
+function plural(n, one, many) { return n + ' ' + (n > 1 ? many : one); }
+function fmtDate(iso) { try { return new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }); } catch (e) { return iso; } }
+
+function renderEleves() {
+  const cls = D.classesOf(app.state);
+  const n = cls.reduce((t, c) => t + c.students.length, 0);
+  const named = cls.filter(c => c.classe);
+  $('el-summary').textContent = n ? plural(n, 'élève', 'élèves') + ' dans ' + plural(named.length, 'classe', 'classes') +
+    (app.state.imports.length ? ' · dernier import le ' + fmtDate(app.state.imports[app.state.imports.length - 1].date) : '') : 'Aucun élève pour l\'instant.';
+  const lb = app.state.lastBackup, days = lb ? (Date.now() - new Date(lb)) / 864e5 : Infinity;
+  $('el-backup-warn').innerHTML = !app.stored && n ? '<div class="note bad"><b>Stockage indisponible.</b> Ce navigateur refuse d\'enregistrer les données : enregistrez une sauvegarde avant de fermer.</div>'
+    : n && days > 7 ? '<div class="note doubt"><b>' + (lb ? 'Dernière sauvegarde il y a ' + Math.floor(days) + ' jours.' : 'Aucune sauvegarde.') + '</b> Enregistrez une copie dans votre Nuage.</div>' : '';
+  if (!n) { $('el-classes').innerHTML = '<p class="muted small">Importez un fichier pour voir les classes.</p>'; return; }
+  let html = '', lvl = null;
+  for (const c of cls) {
+    if (c.level !== lvl) { lvl = c.level; html += '<div class="small muted" style="margin-top:6px;font-weight:700">' + (lvl ? 'Niveau ' + lvl + '<sup>e</sup>' : 'Autres') + '</div>'; }
+    html += '<details class="q" style="display:block"><summary><b>' + (c.classe ? eh(c.classe) : '<span style="color:var(--doubt)">Sans classe</span>') + '</b> <span class="muted small">· ' + plural(c.students.length, 'élève', 'élèves') + '</span></summary>' +
+      '<ol class="small" style="margin:8px 0 0;padding-left:1.6em;columns:2 12em">' + c.students.map(s => '<li>' + eh(s.nom) + ' ' + eh(D.displayFirst(s)) + '</li>').join('') + '</ol></details>';
+  }
+  $('el-classes').innerHTML = html;
+}
+
+// ---- import CSV ----
+$('in-csv').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  const { text, encoding } = D.decodeText(await f.arrayBuffer());
+  const parsed = D.parseCSV(text);
+  app.imp = { name: f.name, encoding, parsed, cols: D.detectColumns(parsed.header) };
+  renderImport();
+});
+function renderImport() {
+  const im = app.imp, z = $('imp-zone'); z.hidden = !im; if (!im) { z.innerHTML = ''; return; }
+  const P = im.parsed, C = im.cols;
+  if (!P.header.length || !P.rows.length) { z.innerHTML = '<div class="note bad"><b>Fichier vide ou illisible.</b> Vérifiez qu\'il s\'agit bien d\'un CSV avec une ligne d\'en-têtes.</div>'; return; }
+  const opt = (field) => '<select id="map-' + field + '" data-field="' + field + '"><option value="-1">(aucune)</option>' + P.header.map((h, i) => '<option value="' + i + '"' + (C[field] === i ? ' selected' : '') + '>' + eh(h) + '</option>').join('') + '</select>';
+  const fields = [['nom', 'Nom'], ['prenom', 'Prénom'], ['usage', 'Prénom d\'usage'], ['classe', 'Classe']];
+  const ignored = P.header.filter((h, i) => !fields.some(([f]) => C[f] === i));
+  let html = '<div class="note"><b>' + eh(im.name) + '</b> · ' + im.encoding + ' · séparateur « ' + (P.sep === '\t' ? 'tabulation' : P.sep) + ' » · ' + plural(P.rows.length, 'ligne', 'lignes') + '</div>' +
+    '<div class="tablewrap"><table><tbody>' + fields.map(([f, l]) => '<tr><th style="width:9em">' + l + '</th><td>' + opt(f) + '</td></tr>').join('') + '</tbody></table></div>' +
+    (ignored.length ? '<p class="small muted">Non conservées : ' + ignored.map(eh).join(', ') + '. La date de naissance et le sexe ne sont jamais enregistrés.</p>' : '');
+  if (C.nom < 0 || C.prenom < 0) { z.innerHTML = html + '<div class="note bad"><b>Indiquez les colonnes du nom et du prénom.</b></div>'; return; }
+  const plan = D.planImport(app.state, P, C); im.plan = plan;
+  const nm = l => eh(l.nom + ' ' + (l.usage || l.prenom));
+  const list = (arr, f) => '<ul class="small" style="margin:4px 0 0;padding-left:1.3em">' + arr.slice(0, 30).map(f).join('') + (arr.length > 30 ? '<li>… et ' + (arr.length - 30) + ' autres</li>' : '') + '</ul>';
+  html += '<div class="stats">' + [[plan.create.length, 'nouveaux élèves'], [plan.move.length, 'changements de classe'], [plan.same.length, 'inchangés'], [plan.missing.length, 'absents du fichier']]
+    .map(([v, l]) => '<div class="stat"><div class="v">' + v + '</div><div class="l">' + l + '</div></div>').join('') + '</div>';
+  if (plan.move.length) html += '<details><summary>Changements de classe</summary>' + list(plan.move, l => '<li>' + nm(l) + ' : ' + eh(l.from) + ' → ' + eh(l.classe || 'sans classe') + '</li>') + '</details>';
+  if (plan.missing.length) html += '<details><summary>Élèves absents du fichier</summary><p class="small muted" style="margin-top:4px">Ils seront retirés des listes de classe. Leurs résultats sont conservés.</p>' + list(plan.missing, s => '<li>' + eh(s.nom + ' ' + D.displayFirst(s)) + ' (' + eh(s.classe) + ')</li>') + '</details>';
+  if (plan.noClass.length) html += '<div class="note doubt"><b>' + plural(plan.noClass.length, 'élève sans classe', 'élèves sans classe') + '</b> dans le fichier :' + list(plan.noClass, l => '<li>' + nm(l) + ' (ligne ' + l.line + ')</li>') + '</div>';
+  if (plan.homonyms.length) html += '<div class="note doubt"><b>Homonymes dans une même classe</b> : ' + plan.homonyms.map(g => nm(g[0]) + ' (' + eh(g[0].classe) + ')').join(', ') + '. Ils sont importés, mais vérifiez-les à l\'export des notes.</div>';
+  if (plan.ambiguous.length) html += '<div class="note bad"><b>' + plural(plan.ambiguous.length, 'ligne ignorée', 'lignes ignorées') + '</b> : plusieurs élèves déjà connus portent ce nom.' + list(plan.ambiguous, l => '<li>' + nm(l) + ' (' + eh(l.classe) + ')</li>') + '</div>';
+  html += '<div class="actions"><button class="btn primary" type="button" id="btn-imp-apply"' + (plan.create.length + plan.move.length + plan.missing.length ? '' : ' disabled') + '>Mettre à jour la liste</button><button class="btn" type="button" id="btn-imp-cancel">Annuler</button></div>';
+  z.innerHTML = html;
+}
+$('imp-zone').addEventListener('change', e => { const f = e.target.dataset.field; if (f) { app.imp.cols[f] = +e.target.value; renderImport(); } });
+$('imp-zone').addEventListener('click', async e => {
+  if (e.target.id === 'btn-imp-cancel') { app.imp = null; renderImport(); }
+  if (e.target.id === 'btn-imp-apply') {
+    const p = app.imp.plan; D.applyImport(app.state, p); app.imp = null; renderImport(); await persist();
+    $('imp-zone').hidden = false;
+    $('imp-zone').innerHTML = '<div class="note ok"><b>Liste mise à jour.</b> ' + plural(p.create.length, 'élève ajouté', 'élèves ajoutés') + ', ' + plural(p.move.length, 'changement', 'changements') + ', ' + plural(p.missing.length, 'élève retiré', 'élèves retirés') + ' des listes.</div>';
+  }
+});
+
+// ---- sauvegarde ----
+$('btn-backup').addEventListener('click', async () => {
+  const d = new Date(), pad = n => String(n).padStart(2, '0');
+  const name = 'qcm-sauvegarde-' + d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + '-' + pad(d.getHours()) + 'h' + pad(d.getMinutes()) + '.json';
+  app.state.lastBackup = d.toISOString();
+  const blob = new Blob([D.makeBackup(app.state)], { type: 'application/json' });
+  const file = new File([blob], name, { type: 'application/json' });
+  let done = false;
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: name }); done = true; }
+    catch (err) { if (err && err.name === 'AbortError') { app.state.lastBackup = null; msg('bk-zone', '', 'Sauvegarde annulée.'); return; } }
+  }
+  if (!done) {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+  }
+  await persist();
+  msg('bk-zone', 'ok', '<b>' + eh(name) + '</b> ' + (done ? 'envoyé. Choisissez Nextcloud pour le ranger dans votre Nuage.' : 'téléchargé. Rangez-le dans votre Nuage.'));
+});
+$('in-restore').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  const p = D.planRestore(app.state, await f.text());
+  if (p.error) { msg('bk-zone', 'bad', '<b>' + eh(p.error) + '</b>'); return; }
+  app.bk = p;
+  const c = p.collections;
+  $('bk-zone').innerHTML = '<div class="note"><b>' + eh(f.name) + '</b>, sauvegarde du ' + fmtDate(p.backup.backupDate || p.backup.created) + '.<br>' +
+    plural(p.add.length, 'élève à ajouter', 'élèves à ajouter') + ', ' + plural(p.update.length, 'élève plus récent', 'élèves plus récents') + ' dans la sauvegarde, ' + p.keep + ' déjà à jour.' +
+    (c.results.add + c.evaluations.add + c.sessions.add ? '<br>' + c.evaluations.add + ' évaluation(s), ' + c.sessions.add + ' séance(s), ' + c.results.add + ' résultat(s) à ajouter.' : '') +
+    '<br><span class="muted small">Rien n\'est effacé : la sauvegarde est fusionnée avec les données du téléphone.</span></div>' +
+    '<div class="actions" style="margin-top:8px"><button class="btn primary" type="button" id="btn-bk-apply">Fusionner</button><button class="btn" type="button" id="btn-bk-cancel">Annuler</button></div>';
+});
+$('bk-zone').addEventListener('click', async e => {
+  if (e.target.id === 'btn-bk-cancel') { app.bk = null; $('bk-zone').innerHTML = ''; }
+  if (e.target.id === 'btn-bk-apply' && app.bk) { D.applyRestore(app.state, app.bk); app.bk = null; await persist(); msg('bk-zone', 'ok', '<b>Sauvegarde fusionnée.</b>'); }
+});
+
 // ---------------- démarrage ----------------
 (async () => {
+  try { const L = await D.load(); app.state = L.state; app.stored = L.persistent; if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) {}
+  renderEleves();
   try { cv = await waitCv(); }
   catch (e) { setEngine('Le moteur d\'analyse ne s\'est pas chargé. Rechargez la page.'); return; }
   setEngine('Moteur prêt · traitement sur l\'appareil, aucune image envoyée', true);
