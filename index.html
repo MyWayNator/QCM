@@ -44,7 +44,7 @@
   --doubt: #f0b44c; --doubt-bg: #3a2c12; color-scheme: dark; }
 
 [hidden] { display: none !important; }
-html, body { background: var(--paper); color: var(--ink); }
+html, body { background: var(--paper); color: var(--ink); overscroll-behavior-y: contain; }
 body { font-family: var(--f-body); font-size: 16px; line-height: 1.45; }
 body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--sheet); }
 .wrap { max-width: 760px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
@@ -180,6 +180,10 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
         <label class="btn" for="in-restore">Restaurer une sauvegarde<input type="file" id="in-restore" accept=".json,application/json"></label>
       </div>
       <div id="bk-zone"></div>
+      <details id="snap-det"><summary class="small">Revenir à un état précédent</summary>
+        <p class="small muted" style="margin:6px 0">L'application garde automatiquement l'état d'avant chaque import, fusion, retrait d'élève ou suppression d'évaluation (8 derniers).</p>
+        <div id="snap-list" class="qlist"></div>
+      </details>
     </div>
   </section>
 
@@ -196,6 +200,7 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
       </div>
     </div>
     <div id="ref-status"></div>
+    <div id="print-zone"></div>
 
     <div id="ref-zone" hidden>
       <div class="figure">
@@ -494,6 +499,8 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
       const nearMarker = [[MARGIN, MARGIN], [gray.cols - MARGIN, MARGIN], [MARGIN, gray.rows - MARGIN], [gray.cols - MARGIN, gray.rows - MARGIN]]
         .some(([mx, my]) => Math.abs(box.x - mx) < 50 && Math.abs(box.y - my) < 50);
       if (nearMarker) continue;
+      // ignorer la zone du QR code (sous le repère haut-gauche) : ses trois « yeux » ressemblent à des cases
+      if (inQrZone(box)) continue;
       box.shape = shape; found.push(box);
     }
     contours.delete(); del(hier, bin, gray);
@@ -510,6 +517,11 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
     }
     return res;
   }
+
+  // Zone du QR code dans l'image redressée : un repère mesure MARKER_PX px (≈ 7,5 mm), le QR 20 mm, posé 4 mm sous le repère.
+  const PX_MM = 56 / 7.6;
+  const QR_ZONE = { x0: MARGIN - 28 - 2 * PX_MM, x1: MARGIN - 28 + 23 * PX_MM, y0: MARGIN + 28, y1: MARGIN + 28 + 27 * PX_MM };
+  const inQrZone = b => b.x > QR_ZONE.x0 && b.x < QR_ZONE.x1 && b.y > QR_ZONE.y0 && b.y < QR_ZONE.y1;
 
   // ---------- 4. Mesure du remplissage ----------
   function makeMeasureCtx(cv, warped) {
@@ -546,7 +558,7 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
   }
 
   /** Taux d'encre à l'intérieur de la case (0..1), en excluant le trait imprimé. */
-  function measureBox(ctx, b, dx = 0, dy = 0) {
+  function measureBox(ctx, b, dx = 0, dy = 0, k = 0.62) {
     const { gray, rgba, W, H } = ctx;
     const cx = b.x + dx, cy = b.y + dy, hw = b.w / 2, hh = b.h / 2;
     // niveau du papier : médiane d'un cadre autour de la case
@@ -559,7 +571,7 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
     }
     const paper = ring.length ? median(ring) : 200;
     const dark = paper - Math.max(30, paper * 0.22);
-    const k = 0.62; let n = 0, ink = 0;
+    let n = 0, ink = 0;
     const d = rgba.data, ch = rgba.channels();
     for (let y = Math.round(cy - hh * k); y <= cy + hh * k; y++) for (let x = Math.round(cx - hw * k); x <= cx + hw * k; x++) {
       if (x < 0 || y < 0 || x >= W || y >= H) continue;
@@ -673,6 +685,11 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
     const ctx = makeMeasureCtx(cv, p.warped);
     normalizeBoxes(ctx, boxes);
     for (const b of boxes) { b.fill = measureBox(ctx, b).fill; b.state = classify(b.fill); }
+    // un « O » du texte imprimé passe pour un rond : son trait épais mord sur la zone mesurée, mais son centre est moins encré (une croix ou un coloriage, lui, passe par le centre)
+    for (let i = boxes.length - 1; i >= 0; i--) {
+      const b = boxes[i];
+      if (b.shape === 'circle' && b.fill > 0.12 && b.fill < 0.5 && measureBox(ctx, b, 0, 0, 0.3).fill < 0.75 * b.fill) boxes.splice(i, 1);
+    }
     const byId = Object.fromEntries(boxes.map(b => [b.id, b]));
     let questions = splitTableCells(cv, ctx, groupQuestions(boxes), byId);
     freeMeasureCtx(ctx);
@@ -710,13 +727,15 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
     // 1) recherche large de chaque case ; 2) décalage attendu = médiane des cases voisines
     //    (la feuille se déforme doucement) ; 3) recalage fin autour de ce décalage
     const first = tpl.boxes.map(b => ({ b, r: refineBox(ctx, b, 16) }));
+    const outlineMin = Math.max(TH.outline, 0.4 * median(first.map(f => f.r.raw)));
     for (const b of tpl.boxes) {
       const near = first.filter(f => Math.hypot(f.b.x - b.x, f.b.y - b.y) < 260 && f.r.raw >= TH.outline);
       const ox = near.length ? median(near.map(f => f.r.dx)) : 0, oy = near.length ? median(near.map(f => f.r.dy)) : 0;
       const r = refineBox(ctx, b, 4, ox, oy);
       const m = measureBox(ctx, b, r.dx, r.dy);
       let state = classify(m.fill);
-      const lost = r.raw < TH.outline || (r.edge && r.raw < 2 * TH.outline);
+      // contour introuvable : en absolu, ou nettement plus faible que celui des autres cases de la même photo
+      const lost = r.raw < outlineMin || (r.edge && r.raw < 2 * TH.outline);
       if (lost) state = 'doute';
       boxes[b.id] = { id: b.id, fill: m.fill, state, dx: r.dx, dy: r.dy, outline: r.raw, lost };
     }
@@ -761,7 +780,7 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
   }
 
   root.QCMCore = { findMarkers, estimateAspect, warp, canonSize, detectBoxes, makeMeasureCtx, freeMeasureCtx, measureBox, refineBox,
-    buildTemplate, readCopy, scoreAnswers, classify, groupQuestions, TH, CANON_W, MARGIN, _u: { del, median } };
+    buildTemplate, readCopy, QR_ZONE, scoreAnswers, classify, groupQuestions, TH, CANON_W, MARGIN, _u: { del, median } };
   if (typeof module !== 'undefined') module.exports = root.QCMCore;
 })(typeof self !== 'undefined' ? self : globalThis);
 </script>
@@ -947,6 +966,7 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
     return ev;
   }
   const versionLabels = ev => Object.keys(ev.versions).sort();
+  const readyLabels = ev => versionLabels(ev).filter(l => ev.versions[l] && ev.versions[l].tpl);
   const nextLabel = ev => LETTERS.split('').find(l => !ev.versions[l]);
   function listEvaluations(state) {
     return Object.values(state.evaluations || {}).filter(e => !e.deleted).sort((a, b) => (b.updated || '').localeCompare(a.updated || ''));
@@ -962,13 +982,42 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
   function propagateLayout(ev, from) {
     if (!ev.sameLayout) return;
     const src = ev.versions[from].tpl;
-    for (const l of versionLabels(ev)) {
+    for (const l of readyLabels(ev)) {
       if (l === from) continue;
       const v = ev.versions[l], mine = new Set(v.tpl.questions.flatMap(q => q.correct || []));
       const ids = new Set(src.boxes.map(b => b.id));
-      v.tpl.boxes = src.boxes.map(b => Object.assign({}, b, { refState: mine.has(b.id) ? 'coche' : 'vide' }));
+      // chaque version garde la position de ses propres cases (une case peut être décalée d'une version à l'autre)
+      const own = Object.fromEntries(v.tpl.boxes.map(b => [b.id, b]));
+      v.tpl.boxes = src.boxes.map(b => Object.assign({}, b, own[b.id] ? { x: own[b.id].x, y: own[b.id].y, w: own[b.id].w, h: own[b.id].h } : {}, { refState: mine.has(b.id) ? 'coche' : 'vide' }));
       v.tpl.questions = src.questions.map(q => Object.assign({}, q, { boxes: q.boxes.slice(), correct: q.boxes.filter(id => mine.has(id) && ids.has(id)) }));
     }
+  }
+  /** Associe les cases d'une nouvelle version à celles de la version de référence (même forme, la plus proche).
+      Retourne null si la structure diffère (une case sans correspondant). */
+  function matchVersionBoxes(refBoxes, newBoxes, maxDist = 110) {
+    const pairs = [];
+    for (const a of refBoxes) for (const b of newBoxes) if (a.shape === b.shape) {
+      const d = Math.hypot(a.x - b.x, (a.y - b.y) * 2); // un décalage vertical compte double : les lignes ne bougent guère
+      if (d < maxDist) pairs.push({ a, b, d });
+    }
+    pairs.sort((p, q) => p.d - q.d);
+    const ua = new Set(), ub = new Set(), map = {};
+    for (const p of pairs) if (!ua.has(p.a.id) && !ub.has(p.b.id)) { ua.add(p.a.id); ub.add(p.b.id); map[p.a.id] = p.b; }
+    if (ua.size !== refBoxes.length || newBoxes.length !== refBoxes.length) return null;
+    return map;
+  }
+  /** Nouvelle version de même structure : questions, points et barème de la référence ; positions et bonnes réponses relevées sur son corrigé. */
+  function versionFromMatch(tpl, map, newTpl) {
+    const c = JSON.parse(JSON.stringify(tpl));
+    c.geo = newTpl.geo;
+    let moved = 0;
+    for (const b of c.boxes) {
+      const m = map[b.id];
+      if (Math.hypot(m.x - b.x, m.y - b.y) > 6) moved++;
+      Object.assign(b, { x: m.x, y: m.y, w: m.w, h: m.h, refState: m.refState, refFill: m.refFill });
+    }
+    for (const q of c.questions) q.correct = q.boxes.filter(id => map[id].refState === 'coche');
+    return { tpl: c, moved };
   }
   /** Nouvelle version de même disposition, à partir de la lecture de son corrigé avec le modèle de la version de référence. */
   function versionFromReading(tpl, boxes) {
@@ -1040,10 +1089,187 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
     } catch (e) { return false; }
   }
 
+  // ---------- 7. Instantanés automatiques (retour en arrière) ----------
+  const MAX_SNAP = 8;
+  async function kvGet(k) { const db = await idb(); return new Promise((res, rej) => { const q = db.transaction(STORE).objectStore(STORE).get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); }
+  async function kvPut(k, v) { const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction(STORE, 'readwrite'); tx.objectStore(STORE).put(v, k); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); }
+  /** Garde une copie de l'état avant une opération importante. */
+  async function snapshot(state, reason) {
+    try {
+      const list = (await kvGet('snapshots')) || [];
+      list.unshift({ date: nowIso(), reason, data: JSON.stringify(state) });
+      await kvPut('snapshots', list.slice(0, MAX_SNAP));
+    } catch (e) { /* stockage indisponible : on continue sans */ }
+  }
+  async function listSnapshots() { try { return (await kvGet('snapshots')) || []; } catch (e) { return []; } }
+
   root.QCMData = { emptyState, decodeText, parseCSV, detectColumns, planImport, applyImport, classesOf, compareClasses, level, displayFirst,
-    newEvaluation, listEvaluations, versionLabels, nextLabel, finalGrade, propagateLayout, versionFromReading,
+    newEvaluation, listEvaluations, versionLabels, readyLabels, snapshot, listSnapshots, nextLabel, finalGrade, propagateLayout, versionFromReading, matchVersionBoxes, versionFromMatch,
     makeBackup, planRestore, duplicates, excludeStudent, markDistinct, applyRestore, load, save, newId, norm, FORMAT };
   if (typeof module !== 'undefined') module.exports = root.QCMData;
+})(typeof self !== 'undefined' ? self : globalThis);
+</script>
+<script>/* Préparation des copies à imprimer : PDF du sujet (Writer) → un exemplaire par élève avec QR code et nom.
+   Navigateur : utilise pdf.js (rendu, pour trouver les repères), pdf-lib (écriture), qrcode-generator, OpenCV (repères). */
+(function (root) {
+  'use strict';
+
+  const LIBS = {
+    pdfjs: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
+    pdfjsWorker: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js',
+    pdflib: 'https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js',
+    qr: 'https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js'
+  };
+  const MM = 72 / 25.4;          // points par millimètre
+  const QR_MM = 20;              // côté du QR code
+  const RENDER_SCALE = 1.5;      // rendu des pages pour chercher les repères (≈ 108 ppp)
+
+  const loaded = {};
+  function loadScript(url) {
+    if (!loaded[url]) loaded[url] = new Promise((res, rej) => {
+      const s = document.createElement('script'); s.src = url; s.async = true;
+      s.onload = res; s.onerror = () => { delete loaded[url]; rej(new Error('Bibliothèque non chargée : vérifiez la connexion.')); };
+      document.head.appendChild(s);
+    });
+    return loaded[url];
+  }
+  async function libs() {
+    await Promise.all([loadScript(LIBS.pdfjs), loadScript(LIBS.pdflib), loadScript(LIBS.qr)]);
+    if (root.pdfjsLib && !root.pdfjsLib.GlobalWorkerOptions.workerSrc) root.pdfjsLib.GlobalWorkerOptions.workerSrc = LIBS.pdfjsWorker;
+    return { pdfjs: root.pdfjsLib, PDFLib: root.PDFLib, qrcode: root.qrcode };
+  }
+
+  /** Regroupe des repères en sujets (4 repères chacun), quelle que soit la disposition sur la page. */
+  function groupMarkerSets(cands) {
+    const left = cands.slice(), sets = [];
+    while (left.length >= 4) {
+      left.sort((a, b) => (a.y - b.y) || (a.x - b.x));
+      const tl = left[0], tol = tl.s * 1.5;
+      const right = left.filter(c => c !== tl && Math.abs(c.y - tl.y) < tol && c.x > tl.x).sort((a, b) => a.x - b.x)[0];
+      const below = left.filter(c => c !== tl && Math.abs(c.x - tl.x) < tol && c.y > tl.y).sort((a, b) => a.y - b.y)[0];
+      if (!right || !below) { left.shift(); continue; }
+      const br = left.filter(c => Math.abs(c.x - right.x) < tol && Math.abs(c.y - below.y) < tol)[0];
+      if (!br) { left.shift(); continue; }
+      sets.push({ tl, tr: right, br, bl: below, s: (tl.s + right.s + br.s + below.s) / 4 });
+      for (const c of [tl, right, br, below]) left.splice(left.indexOf(c), 1);
+    }
+    return sets;
+  }
+
+  /** Analyse le PDF du sujet : pour chaque page, les sujets trouvés (en points PDF, origine en bas à gauche). */
+  async function analyzeSubjectPdf(cv, Q, bytes) {
+    const { pdfjs } = await libs();
+    const doc = await pdfjs.getDocument({ data: bytes.slice(0) }).promise;
+    const pages = [];
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i);
+      const vp = page.getViewport({ scale: RENDER_SCALE });
+      const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+      const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+      await page.render({ canvasContext: ctx, viewport: vp }).promise;
+      const mat = cv.imread(c);
+      const mk = Q.findMarkers(cv, mat); mat.delete();
+      const H = page.view[3] - page.view[1];
+      const toPt = p => ({ x: p.x / RENDER_SCALE, y: H - p.y / RENDER_SCALE, s: p.s / RENDER_SCALE });
+      // regroupement en coordonnées image (y vers le bas = ordre de lecture), puis conversion en points PDF
+      const sets = groupMarkerSets(mk.cands || []).map(st => ({ tl: toPt(st.tl), tr: toPt(st.tr), br: toPt(st.br), bl: toPt(st.bl), s: st.s / RENDER_SCALE }));
+      pages.push({ index: i - 1, width: page.view[2] - page.view[0], height: H, slots: sets, thumb: c.toDataURL('image/jpeg', 0.6) });
+    }
+    return { numPages: doc.numPages, pages };
+  }
+
+  /** Texte compatible avec les polices standard du PDF (WinAnsi) : on retire seulement ce qui n'y entre pas. */
+  function safeText(font, t) {
+    let out = '';
+    for (const ch of String(t)) {
+      try { font.encodeText(ch); out += ch; }
+      catch (e) { const base = ch.normalize('NFD').replace(/[̀-ͯ]/g, ''); try { font.encodeText(base); out += base; } catch (e2) { out += '?'; } }
+    }
+    return out;
+  }
+  function fitText(font, text, size, maxW) {
+    let t = text;
+    while (t.length > 3 && font.widthOfTextAtSize(t, size) > maxW) t = t.slice(0, -2);
+    return t === text ? t : t.replace(/.$/, '…');
+  }
+
+  /** Contenu du QR code : court et en mode alphanumérique (majuscules, chiffres, « : »). */
+  const qrPayload = (evId, version, studentId) => 'QCM1:' + evId + ':' + version + ':' + studentId;
+  function parsePayload(t) {
+    const m = /^QCM1:([A-Z0-9]+):([A-H]):([A-Z0-9]+)$/.exec(String(t || '').trim());
+    return m ? { evId: m[1], version: m[2], studentId: m[3] } : null;
+  }
+
+  function drawQR(page, qrcode, rgb, text, x, yTop, size) {
+    const q = qrcode(0, 'M'); q.addData(text, 'Alphanumeric'); q.make();
+    const n = q.getModuleCount(), m = size / n, black = rgb(0, 0, 0);
+    for (let r = 0; r < n; r++) {
+      let c = 0;
+      while (c < n) {
+        if (!q.isDark(r, c)) { c++; continue; }
+        let e = c; while (e + 1 < n && q.isDark(r, e + 1)) e++;
+        // léger chevauchement pour éviter les filets blancs entre modules à l'impression
+        page.drawRectangle({ x: x + c * m, y: yTop - (r + 1) * m, width: (e - c + 1) * m + 0.05, height: m + 0.05, color: black });
+        c = e + 1;
+      }
+    }
+    return n;
+  }
+
+  /**
+   * Crée le PDF de la classe.
+   * jobs : [{ student, version }] dans l'ordre voulu ; pageOf : { A: index de page, … } ; analysis : résultat d'analyzeSubjectPdf.
+   */
+  async function buildClassPdf({ bytes, analysis, pageOf, jobs, ev, classe, onProgress }) {
+    const { PDFLib, qrcode } = await libs();
+    const { PDFDocument, StandardFonts, rgb } = PDFLib;
+    const src = await PDFDocument.load(bytes.slice(0));
+    const out = await PDFDocument.create();
+    out.setTitle(ev.name + ' - ' + classe); out.setCreator('Correcteur QCM');
+    const bold = await out.embedFont(StandardFonts.HelveticaBold), reg = await out.embedFont(StandardFonts.Helvetica);
+    const multi = Object.keys(pageOf).length > 1;
+    // regroupe les élèves d'une même version par feuille (plusieurs sujets possibles par page)
+    const byVersion = {};
+    for (const j of jobs) (byVersion[j.version] = byVersion[j.version] || []).push(j);
+    const sheets = [];
+    for (const [v, list] of Object.entries(byVersion)) {
+      const slots = analysis.pages[pageOf[v]].slots;
+      for (let i = 0; i < list.length; i += slots.length) sheets.push({ v, list: list.slice(i, i + slots.length), first: jobs.indexOf(list[i]) });
+    }
+    if (Object.values(pageOf).every(p => analysis.pages[p].slots.length === 1)) sheets.sort((a, b) => a.first - b.first); // ordre alphabétique conservé
+    let done = 0;
+    for (const sh of sheets) {
+      const [pg] = await out.copyPages(src, [pageOf[sh.v]]);
+      out.addPage(pg);
+      const slots = analysis.pages[pageOf[sh.v]].slots;
+      sh.list.forEach((j, k) => {
+        const sl = slots[k], half = sl.tl.s / 2;
+        const x = sl.tl.x - half, yTop = sl.tl.y - half - 4 * MM, size = QR_MM * MM;
+        drawQR(pg, qrcode, rgb, qrPayload(ev.id, j.version, j.student.id), x, yTop, size);
+        const tx = x + size + 4 * MM, maxW = Math.max(60, (sl.tr.x - sl.tl.x) * 0.55 - size);
+        const name = safeText(bold, j.student.nom.toUpperCase() + ' ' + (j.student.usage || j.student.prenom));
+        pg.drawText(fitText(bold, name, 13, maxW), { x: tx, y: yTop - 12, size: 13, font: bold, color: rgb(0, 0, 0) });
+        pg.drawText(fitText(reg, safeText(reg, classe), 10, maxW), { x: tx, y: yTop - 27, size: 10, font: reg, color: rgb(0.2, 0.2, 0.2) });
+        if (multi) pg.drawText('Version ' + j.version, { x: tx, y: yTop - 40, size: 10, font: reg, color: rgb(0.2, 0.2, 0.2) });
+      });
+      done += sh.list.length; if (onProgress) onProgress(done, jobs.length);
+    }
+    return { bytes: await out.save(), sheets: sheets.length };
+  }
+
+  /** Rendu de la première page d'un PDF (aperçu). */
+  async function renderFirstPage(bytes, width) {
+    const { pdfjs } = await libs();
+    const doc = await pdfjs.getDocument({ data: bytes.slice(0) }).promise;
+    const page = await doc.getPage(1);
+    const vp0 = page.getViewport({ scale: 1 }), vp = page.getViewport({ scale: width / vp0.width });
+    const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+    const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+    await page.render({ canvasContext: ctx, viewport: vp }).promise;
+    return c;
+  }
+
+  root.QCMPrint = { libs, analyzeSubjectPdf, buildClassPdf, renderFirstPage, groupMarkerSets, qrPayload, parsePayload, LIBS, QR_MM };
 })(typeof self !== 'undefined' ? self : globalThis);
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@techstark/opencv-js@5.0.0-release.1/dist/opencv.js" async id="cv-script"></script>
@@ -1162,32 +1388,32 @@ async function loadReference(src, fromSample) {
   const rgba = cv.imread(canvas);
   const t0 = performance.now();
   let ev = curEval(), info = '';
-  if (pend.kind === 'version') {
-    // même disposition que la version de référence ? on lit le corrigé avec son modèle
-    const refL = D.versionLabels(ev)[0], refT = ev.versions[refL].tpl;
-    const rd = Q.readCopy(cv, rgba, refT);
-    const lost = rd.error ? Infinity : Object.values(rd.boxes).filter(b => b.lost || b.state === 'doute').length;
-    if (!rd.error && lost <= refT.boxes.length * 0.1 && ev.sameLayout) {
-      const tpl = D.versionFromReading(refT, rd.boxes);
-      ev.versions[pend.label] = { tpl, img: matToCanvas(rd.warped).toDataURL('image/jpeg', 0.8) };
-      rd.warped.delete(); rgba.delete();
-      info = '<b>Version ' + pend.label + '</b> : même disposition que la version ' + refL + '. Seules les bonnes réponses ont été relevées ; questions, points et barème sont communs.';
-      return finishLoad(ev, pend.label, info, t0);
-    }
-    if (rd.warped) rd.warped.delete();
-    info = 'La disposition diffère de la version ' + refL + ' : la version ' + pend.label + ' a sa propre grille. Vérifiez son découpage et ses points. ';
-  }
   const r = Q.buildTemplate(cv, rgba);
   rgba.delete();
   if (r.error) { msg('ref-status', 'bad', markerHelp(r.error, r.nMarkers)); return; }
-  sortQuestions(r.template);
   const img = matToCanvas(r.warped).toDataURL('image/jpeg', 0.8); r.warped.delete();
+  // nouvelle version (ou nouvelle photo d'une version) d'une évaluation qui en a d'autres : même structure ?
+  const label0 = pend.kind === 'version' ? pend.label : st.version;
+  const others = ev ? D.readyLabels(ev).filter(l => l !== label0) : [];
+  if (pend.kind !== 'new' && others.length) {
+    const refL = others[0], refT = ev.versions[refL].tpl;
+    const map = ev.sameLayout ? D.matchVersionBoxes(refT.boxes, r.template.boxes) : null;
+    if (map) {
+      const vm = D.versionFromMatch(refT, map, r.template);
+      ev.versions[label0] = { tpl: vm.tpl, img };
+      info = '<b>Version ' + label0 + '</b> : mêmes cases que la version ' + refL + '. Questions, points et barème sont communs ; les bonnes réponses ont été relevées sur ce corrigé.' +
+        (vm.moved ? ' ' + vm.moved + ' case' + (vm.moved > 1 ? 's sont placées' : ' est placée') + ' autrement que dans la version ' + refL + ' : leur position propre est enregistrée.' : '');
+      return finishLoad(ev, label0, info, t0);
+    }
+    ev.sameLayout = false;
+    info = 'Les cases diffèrent de la version ' + refL + ' : la version ' + label0 + ' a sa propre grille. Vérifiez son découpage et ses points. ';
+  }
+  sortQuestions(r.template);
   let label = 'A';
   if (pend.kind === 'new') {
     const nm = ($('ev-new-name') && $('ev-new-name').value.trim()) || (fromSample ? 'Exemple : schémas et sens du courant' : 'Évaluation du ' + new Date().toLocaleDateString('fr-FR'));
     ev = D.newEvaluation(app.state, nm, { sample: fromSample });
-  } else if (pend.kind === 'version') { label = pend.label; ev.sameLayout = false; }
-  else label = st.version;
+  } else label = label0;
   ev.versions[label] = { tpl: r.template, img };
   const nQ = r.template.questions.length;
   info += '<b>' + r.template.boxes.length + ' cases</b> trouvées, regroupées en <b>' + nQ + ' questions</b>. Vérifiez la grille, les bonnes réponses et les points ci-dessous.';
@@ -1209,11 +1435,12 @@ async function selectEvaluation(id, label) {
   $('ref-zone').hidden = true; $('ref-edit').hidden = true; $('ref-status').innerHTML = '';
   if (ev) {
     const labs = D.versionLabels(ev);
-    st.version = ev.versions[label] ? label : labs[0];
+    st.version = ev.versions[label] ? label : (D.readyLabels(ev)[0] || labs[0] || 'A');
     if (!ev.versions[st.copyVersion]) st.copyVersion = st.version;
     if (!app.state.ui || app.state.ui.lastEval !== id) { app.state.ui = Object.assign(app.state.ui || {}, { lastEval: id }); persistSoon(); }
     const v = ev.versions[st.version];
-    if (v) {
+    if (!v || !v.tpl) st.pending = { kind: 'version', label: st.version || 'A' };
+    if (v && v.tpl) {
       st.tpl = v.tpl; st.refFromSample = !!ev.sample;
       st.refCanvas = await fileToCanvas(v.img);
       if (cv) st.refMat = cv.imread(st.refCanvas);
@@ -1241,7 +1468,9 @@ function renderEvHead() {
     (ev ? '<option value="__new">＋ Nouvelle évaluation</option>' : '') + '</select></label>' : '';
   if (!ev) {
     h = '<h2>Nouvelle évaluation</h2>' + picker +
-      '<label class="small" style="display:flex;flex-direction:column;gap:4px">Nom<input type="text" id="ev-new-name" placeholder="Ex. Flash test #02 : ions et réaction" style="font:1rem var(--f-body);padding:8px;border-radius:8px;border:1px solid var(--rule);background:var(--sheet);color:var(--ink)"></label>';
+      '<label class="small" style="display:flex;flex-direction:column;gap:4px">Nom<input type="text" id="ev-new-name" placeholder="Ex. Flash test #02 : ions et réaction" style="font:1rem var(--f-body);padding:8px;border-radius:8px;border:1px solid var(--rule);background:var(--sheet);color:var(--ink)"></label>' +
+      '<div class="note" style="display:flex;flex-direction:column;gap:8px"><span><b>Les copies ne sont pas encore imprimées ?</b> Commencez par le PDF du sujet exporté de Writer (une page par version) : l\'application préparera les copies avec QR code et nom. Le corrigé se photographie ensuite.</span>' +
+      '<div class="actions"><label class="btn" for="in-new-pdf">Partir du PDF du sujet<input type="file" id="in-new-pdf" accept="application/pdf,.pdf"></label></div></div>';
     $('ref-actions-text').textContent = 'Photographiez l\'exemplaire corrigé (version A s\'il y en a plusieurs). Les quatre repères doivent être dans le cadre.';
     $('ref-actions').hidden = false; $('btn-ref-sample').hidden = false; $('btn-ref-cancel').hidden = true;
   } else {
@@ -1249,9 +1478,9 @@ function renderEvHead() {
     h = picker +
       '<label class="small" style="display:flex;flex-direction:column;gap:4px">Nom<input type="text" id="ev-name" value="' + eh(ev.name) + '" style="font:600 1.1rem var(--f-display);padding:8px;border-radius:8px;border:1px solid var(--rule);background:var(--sheet);color:var(--ink)"></label>' +
       '<div style="display:flex;flex-direction:column;gap:6px"><span class="small">Versions du sujet</span><div class="seg" id="ev-versions">' +
-      labs.map(l => '<button type="button" data-ver="' + l + '" aria-pressed="' + (l === st.version) + '">Version ' + l + '</button>').join('') +
+      labs.map(l => '<button type="button" data-ver="' + l + '" aria-pressed="' + (l === st.version) + '">Version ' + l + (ev.versions[l].tpl ? '' : ' · corrigé à photographier') + '</button>').join('') +
       (D.nextLabel(ev) ? '<button type="button" data-addver="1" aria-pressed="false">＋ Version ' + D.nextLabel(ev) + '</button>' : '') + '</div>' +
-      (multi ? '<span class="small muted">' + (ev.sameLayout ? 'Même disposition : questions, points et barème communs ; bonnes réponses propres à chaque version.' : 'Dispositions différentes : chaque version a sa propre grille.') + '</span>' : '') + '</div>' +
+      (D.readyLabels(ev).length > 1 ? '<span class="small muted">' + (ev.sameLayout ? 'Même disposition : questions, points et barème communs ; bonnes réponses propres à chaque version.' : 'Dispositions différentes : chaque version a sa propre grille.') + '</span>' : '') + '</div>' +
       '<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:end">' +
         '<label class="small" style="display:flex;flex-direction:column;gap:4px">Note sur<select id="ev-scale">' + [20, 10, 5].map(v => '<option value="' + v + '"' + (ev.scale === v ? ' selected' : '') + '>' + v + '</option>').join('') +
           '<option value="custom"' + ([20, 10, 5].includes(ev.scale) ? '' : ' selected') + '>autre</option></select></label>' +
@@ -1264,12 +1493,24 @@ function renderEvHead() {
       '</div></details>';
     const show = !!pend;
     $('ref-actions').hidden = !show; $('btn-ref-sample').hidden = true; $('btn-ref-cancel').hidden = !show;
+    $('btn-ref-cancel').hidden = !show || (pend && pend.kind === 'version' && ev.versions[pend.label] && !ev.versions[pend.label].tpl);
     if (pend) $('ref-actions-text').textContent = pend.kind === 'version' ? 'Photographiez l\'exemplaire corrigé de la version ' + pend.label + '.' : 'Photographiez à nouveau le corrigé de la version ' + st.version + '. La grille actuelle de cette version sera remplacée.';
   }
   $('ev-head').innerHTML = h;
+  renderPrint();
 }
 $('ev-head').addEventListener('change', async e => {
   const ev = curEval(), t = e.target;
+  if (t.id === 'in-new-pdf') {
+    const f = t.files[0]; t.value = ''; if (!f) return;
+    const nm = ($('ev-new-name').value || '').trim() || f.name.replace(/\.pdf$/i, '');
+    const nev = D.newEvaluation(app.state, nm);
+    nev.subject = { name: f.name, data: await blobToDataURL(f) };
+    await persist(); st.printOpen = true;
+    await selectEvaluation(nev.id);
+    msg('ref-status', 'ok', '<b>Évaluation créée.</b> Préparez les copies ci-dessous. Vous photographierez le corrigé plus tard.');
+    return;
+  }
   if (t.id === 'ev-pick') { st.pending = null; if (t.value === '__new' || !t.value) await selectEvaluation(null); else await selectEvaluation(t.value); return; }
   if (!ev) return;
   if (t.id === 'ev-name') { ev.name = t.value.trim() || ev.name; }
@@ -1285,7 +1526,7 @@ $('ev-head').addEventListener('click', async e => {
   else if (b.id === 'ev-replace') { st.pending = { kind: 'replace' }; renderEvHead(); }
   else if (b.id === 'ev-delete') {
     if (!st.delArmed) { st.delArmed = true; renderEvHead(); setTimeout(() => { st.delArmed = false; if (curEval()) renderEvHead(); }, 4000); return; }
-    st.delArmed = false; ev.deleted = true; ev.updated = new Date().toISOString(); await persist();
+    st.delArmed = false; await D.snapshot(app.state, 'avant la suppression de « ' + ev.name + ' »'); ev.deleted = true; ev.updated = new Date().toISOString(); await persist();
     const next = D.listEvaluations(app.state)[0]; await selectEvaluation(next ? next.id : null);
     msg('ref-status', '', 'Évaluation supprimée.');
   }
@@ -1577,8 +1818,9 @@ function renderCopyEval() {
   const ev = curEval();
   $('copy-samples').hidden = !(ev && ev.sample);
   if (!ev) { $('copy-ev').innerHTML = '<div class="note">Aucune évaluation choisie. Ouvrez l\'onglet <b>Évaluations</b>.</div>'; return; }
-  const labs = D.versionLabels(ev);
-  if (!ev.versions[st.copyVersion]) st.copyVersion = labs[0];
+  const labs = D.readyLabels(ev);
+  if (!labs.includes(st.copyVersion)) st.copyVersion = labs[0];
+  if (!labs.length) { $('copy-ev').innerHTML = '<div class="note doubt">Évaluation <b>' + escapeHtml(ev.name) + '</b> : photographiez d\'abord son corrigé dans l\'onglet Évaluations.</div>'; return; }
   $('copy-ev').innerHTML = '<div class="note" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center"><span>Évaluation : <b>' + escapeHtml(ev.name) + '</b></span>' +
     (labs.length > 1 ? '<span class="seg" id="copy-ver">' + labs.map(l => '<button type="button" data-ver="' + l + '" aria-pressed="' + (l === st.copyVersion) + '">Version ' + l + '</button>').join('') + '</span>' : '') + '</div>';
 }
@@ -1629,6 +1871,124 @@ $('btn-clear-log').addEventListener('click', () => {
   st.log = []; renderCount(); renderLog(); msg('log-msg', '', '');
 });
 
+// ---------------- COPIES À IMPRIMER ----------------
+const P = window.QCMPrint;
+function blobToDataURL(b) { return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(b); }); }
+function dataURLToBytes(u) { const b = atob(u.split(',')[1]); const a = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i); return a; }
+const pr = { evId: null, analysis: null, busy: false, classe: '', unchecked: new Set(), result: null };
+
+async function analyzeSubject(ev) {
+  pr.evId = ev.id; pr.analysis = null; pr.result = null;
+  if (!ev.subject || !cv) return;
+  pr.busy = true; renderPrint();
+  try { pr.analysis = await P.analyzeSubjectPdf(cv, Q, dataURLToBytes(ev.subject.data)); pr.error = null; }
+  catch (e) { pr.error = e.message || String(e); }
+  pr.busy = false;
+  // correspondance page → version : page i = version A, B, … (pages sans repère ignorées)
+  if (pr.analysis && !ev.subject.pageOf) {
+    const pageOf = {}; let k = 0;
+    for (const pg of pr.analysis.pages) if (pg.slots.length) pageOf['ABCDEFGH'[k++]] = pg.index;
+    ev.subject.pageOf = pageOf; persistSoon();
+  }
+  renderPrint();
+}
+
+function renderPrint() {
+  const ev = curEval(), z = $('print-zone');
+  if (!ev) { z.innerHTML = ''; return; }
+  if (pr.evId !== ev.id) { pr.evId = ev.id; pr.analysis = null; pr.result = null; pr.error = null; if (ev.subject) setTimeout(() => analyzeSubject(ev), 0); }
+  const cls = D.classesOf(app.state).filter(c => c.classe);
+  if (!pr.classe || !cls.some(c => c.classe === pr.classe)) pr.classe = cls.length ? cls[0].classe : '';
+  let h = '<details id="print-det"' + (st.printOpen ? ' open' : '') + '><summary><b>Copies à imprimer</b> <span class="muted small">· PDF avec QR code et nom pour chaque élève</span></summary><div style="display:flex;flex-direction:column;gap:12px;margin-top:10px">';
+  // 1. sujet
+  h += '<div style="display:flex;flex-direction:column;gap:6px"><span class="small"><b>1. Le sujet</b> : PDF exporté de Writer, une page par version, avec les quatre repères et le bandeau vide.</span>';
+  if (ev.subject) h += '<div class="small">' + eh(ev.subject.name) + (pr.analysis ? ' · ' + plural(pr.analysis.numPages, 'page', 'pages') : '') + '</div>';
+  h += '<div class="actions"><label class="btn small" for="in-subject">' + (ev.subject ? 'Changer de PDF' : 'Choisir le PDF du sujet') + '<input type="file" id="in-subject" accept="application/pdf,.pdf"></label></div>';
+  if (pr.busy) h += '<span class="busy">Recherche des repères dans le PDF…</span>';
+  if (pr.error) h += '<div class="note bad"><b>PDF illisible.</b> ' + eh(pr.error) + '</div>';
+  const A = pr.analysis, pageOf = (ev.subject && ev.subject.pageOf) || {};
+  if (A) {
+    h += '<div class="qlist">' + A.pages.map(pg => {
+      const lab = Object.keys(pageOf).find(l => pageOf[l] === pg.index) || '';
+      return '<div class="q" style="grid-template-columns:72px 1fr"><img src="' + pg.thumb + '" alt="Page ' + (pg.index + 1) + '" style="width:72px;border:1px solid var(--rule);border-radius:4px">' +
+        '<div class="body"><div class="line"><b>Page ' + (pg.index + 1) + '</b>' + (pg.slots.length ? '<span class="pill ok">' + plural(pg.slots.length, 'sujet repéré', 'sujets repérés') + '</span>' : '<span class="pill bad">aucun repère</span>') + '</div>' +
+        (pg.slots.length ? '<label class="small">Version <select data-page="' + pg.index + '"><option value="">ne pas utiliser</option>' + 'ABCDEFGH'.slice(0, Math.max(A.pages.length, D.versionLabels(ev).length)).split('').map(l => '<option value="' + l + '"' + (l === lab ? ' selected' : '') + '>' + l + '</option>').join('') + '</select></label>' : '<span class="small muted">Ajoutez les quatre carrés noirs aux coins du sujet.</span>') +
+        '</div></div>';
+    }).join('') + '</div>';
+    const missing = Object.keys(pageOf).filter(l => !ev.versions[l] || !ev.versions[l].tpl);
+    if (missing.length) h += '<p class="small muted">Corrigé à photographier ensuite pour : version ' + missing.join(', ') + '. Ce n\'est pas nécessaire pour imprimer.</p>';
+  }
+  // 2. classe
+  h += '<div style="display:flex;flex-direction:column;gap:6px"><span class="small"><b>2. La classe</b></span>';
+  if (!cls.length) h += '<div class="note">Importez d\'abord la liste des élèves (onglet Élèves).</div>';
+  else {
+    const c = cls.find(x => x.classe === pr.classe);
+    const dupIds = new Set(D.duplicates(app.state).flatMap(g => g.students.map(s => s.id)));
+    h += '<select id="pr-classe">' + cls.map(x => '<option' + (x.classe === pr.classe ? ' selected' : '') + '>' + eh(x.classe) + '</option>').join('') + '</select>';
+    h += '<div class="small" style="columns:2 11em;column-gap:12px">' + c.students.map(s => '<label style="display:flex;gap:6px;align-items:center;break-inside:avoid;padding:2px 0"><input type="checkbox" data-stu="' + s.id + '"' + (pr.unchecked.has(s.id) ? '' : ' checked') + '>' + eh(s.nom + ' ' + D.displayFirst(s)) + (dupIds.has(s.id) ? ' <b style="color:var(--doubt)">doublon</b>' : '') + '</label>').join('') + '</div>';
+    const n = c.students.filter(s => !pr.unchecked.has(s.id)).length;
+    const labs = Object.keys(pageOf).sort();
+    h += '<span class="small muted">' + plural(n, 'copie', 'copies') + (labs.length > 1 ? ', versions ' + labs.join(', ') + ' en alternance dans l\'ordre alphabétique' : '') + '.</span>';
+    if (c.students.some(s => dupIds.has(s.id))) h += '<div class="note doubt small">Cette classe contient un doublon : retirez-le dans l\'onglet Élèves ou décochez-le, sinon il recevra une copie.</div>';
+    h += '<div class="actions"><button class="btn primary" type="button" id="btn-make-pdf"' + (A && labs.length && n && !pr.busy ? '' : ' disabled') + '>Créer le PDF de la classe</button></div>';
+  }
+  h += '</div><div id="pr-result"></div></div></details>';
+  z.innerHTML = h;
+  if (pr.result) showPrintResult();
+}
+function showPrintResult() {
+  const r = pr.result; if (!r) return;
+  $('pr-result').innerHTML = '<div class="note ok" style="display:flex;flex-direction:column;gap:8px"><span><b>' + eh(r.name) + '</b> : ' + plural(r.count, 'copie', 'copies') + ' sur ' + plural(r.sheets, 'page', 'pages') + '.</span>' +
+    '<div class="actions"><button class="btn primary" type="button" id="btn-save-pdf">Enregistrer le PDF</button></div><div id="pr-saved"></div><span class="small muted">Imprimez à 100 % (taille réelle), sans « ajuster à la page ».</span></div>' +
+    '<div class="figure" style="margin-top:8px"><div id="pr-preview"></div><div class="cap"><span>Aperçu de la première page</span></div></div>';
+  if (r.preview) $('pr-preview').appendChild(r.preview); r.preview && (r.preview.style.width = '100%');
+}
+
+$('print-zone').addEventListener('toggle', e => { if (e.target.id === 'print-det') st.printOpen = e.target.open; }, true);
+$('print-zone').addEventListener('change', async e => {
+  const ev = curEval(), t = e.target; if (!ev) return;
+  if (t.id === 'in-subject') {
+    const f = t.files[0]; t.value = ''; if (!f) return;
+    ev.subject = { name: f.name, data: await blobToDataURL(f) }; ev.updated = new Date().toISOString(); persistSoon();
+    await analyzeSubject(ev); return;
+  }
+  if (t.dataset.page != null) {
+    const pageOf = ev.subject.pageOf = ev.subject.pageOf || {};
+    for (const l of Object.keys(pageOf)) if (pageOf[l] === +t.dataset.page || l === t.value) delete pageOf[l];
+    if (t.value) pageOf[t.value] = +t.dataset.page;
+    persistSoon(); pr.result = null; renderPrint(); return;
+  }
+  if (t.id === 'pr-classe') { pr.classe = t.value; pr.result = null; renderPrint(); return; }
+  if (t.dataset.stu) { if (t.checked) pr.unchecked.delete(t.dataset.stu); else pr.unchecked.add(t.dataset.stu); pr.result = null; renderPrint(); }
+});
+$('print-zone').addEventListener('click', async e => {
+  const ev = curEval(), b = e.target.closest('button'); if (!b || !ev) return;
+  if (b.id === 'btn-make-pdf') {
+    const c = D.classesOf(app.state).find(x => x.classe === pr.classe); if (!c) return;
+    const pageOf = ev.subject.pageOf, labs = Object.keys(pageOf).sort();
+    const list = c.students.filter(s => !pr.unchecked.has(s.id));
+    ev.assign = ev.assign || {};
+    const jobs = list.map((s, i) => ({ student: s, version: labs[i % labs.length] }));
+    b.disabled = true; $('pr-result').innerHTML = '<span class="busy" id="pr-prog">Préparation des copies…</span>';
+    try {
+      const out = await P.buildClassPdf({ bytes: dataURLToBytes(ev.subject.data), analysis: pr.analysis, pageOf, jobs, ev, classe: c.classe,
+        onProgress: (d, n) => { const p = $('pr-prog'); if (p) p.textContent = 'Préparation des copies… ' + d + ' / ' + n; } });
+      // versions sans corrigé : créées vides, à photographier
+      for (const l of labs) if (!ev.versions[l]) ev.versions[l] = {};
+      for (const j of jobs) ev.assign[j.student.id] = j.version;
+      ev.printed = (ev.printed || []).concat({ date: new Date().toISOString(), classe: c.classe, count: jobs.length });
+      ev.updated = new Date().toISOString(); await persist();
+      const name = (ev.name + ' - ' + c.classe).replace(/#/g, '').replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ') + '.pdf';
+      pr.result = { bytes: out.bytes, sheets: out.sheets, count: jobs.length, name, preview: await P.renderFirstPage(out.bytes, 900) };
+      renderEvHead(); renderPrint();
+    } catch (err) { $('pr-result').innerHTML = '<div class="note bad"><b>Le PDF n\'a pas pu être créé.</b> ' + eh(err.message || String(err)) + '</div>'; b.disabled = false; }
+  }
+  if (b.id === 'btn-save-pdf' && pr.result) {
+    const how = await saveBlob(new Blob([pr.result.bytes], { type: 'application/pdf' }), pr.result.name);
+    if (how !== 'cancel') msg('pr-saved', '', '<b>' + eh(pr.result.name) + '</b> ' + (how === 'shared' ? 'envoyé.' : 'téléchargé (dossier Téléchargements).'));
+  }
+});
+
 // ---------------- ÉLÈVES ----------------
 const D = window.QCMData;
 const app = { state: D.emptyState(), stored: false, imp: null, bk: null };
@@ -1664,7 +2024,7 @@ function renderEleves() {
 
 $('el-dups').addEventListener('click', async e => {
   const b = e.target.closest('button'); if (!b) return;
-  if (b.dataset.excl) D.excludeStudent(app.state, b.dataset.excl);
+  if (b.dataset.excl) { const su = app.state.students[b.dataset.excl]; await D.snapshot(app.state, 'avant le retrait de ' + su.nom + ' ' + su.prenom + ' (' + su.classe + ')'); D.excludeStudent(app.state, b.dataset.excl); }
   else if (b.dataset.distinct) D.markDistinct(app.state, b.dataset.distinct);
   else return;
   await persist();
@@ -1706,13 +2066,44 @@ $('imp-zone').addEventListener('change', e => { const f = e.target.dataset.field
 $('imp-zone').addEventListener('click', async e => {
   if (e.target.id === 'btn-imp-cancel') { app.imp = null; renderImport(); }
   if (e.target.id === 'btn-imp-apply') {
-    const p = app.imp.plan; D.applyImport(app.state, p); app.imp = null; renderImport(); await persist();
+    const p = app.imp.plan; await D.snapshot(app.state, 'avant l\'import de ' + app.imp.name); D.applyImport(app.state, p); app.imp = null; renderImport(); await persist();
     $('imp-zone').hidden = false;
     $('imp-zone').innerHTML = '<div class="note ok"><b>Liste mise à jour.</b> ' + plural(p.create.length, 'élève ajouté', 'élèves ajoutés') + ', ' + plural(p.move.length, 'changement', 'changements') + ', ' + plural(p.missing.length, 'élève retiré', 'élèves retirés') + ' des listes.</div>';
   }
 });
 
+// ---- retour en arrière ----
+let snapArmed = null;
+async function renderSnaps() {
+  const list = await D.listSnapshots();
+  $('snap-list').innerHTML = list.length ? list.map((x, i) => '<div class="q" style="grid-template-columns:1fr auto;align-items:center"><div class="small"><b>' + new Date(x.date).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) + '</b><br>' + eh(x.reason) + '</div>' +
+    '<button class="btn small" type="button" data-snap="' + i + '">' + (snapArmed === i ? 'Confirmer' : 'Revenir à cet état') + '</button></div>').join('') : '<p class="small muted">Aucun état enregistré pour l\'instant.</p>';
+}
+$('snap-det').addEventListener('toggle', () => { if ($('snap-det').open) renderSnaps(); });
+$('snap-list').addEventListener('click', async e => {
+  const b = e.target.closest('[data-snap]'); if (!b) return;
+  const i = +b.dataset.snap;
+  if (snapArmed !== i) { snapArmed = i; renderSnaps(); setTimeout(() => { if (snapArmed === i) { snapArmed = null; renderSnaps(); } }, 4000); return; }
+  snapArmed = null;
+  const x = (await D.listSnapshots())[i]; if (!x) return;
+  await D.snapshot(app.state, 'avant le retour à l\'état du ' + new Date(x.date).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }));
+  app.state = JSON.parse(x.data); await persist();
+  const last = app.state.ui && app.state.ui.lastEval;
+  await selectEvaluation(last && app.state.evaluations[last] && !app.state.evaluations[last].deleted ? last : null);
+  renderSnaps(); msg('bk-zone', 'ok', '<b>État rétabli</b> : ' + eh(x.reason) + '.');
+});
 // ---- sauvegarde ----
+/** Enregistre un fichier : partage (Android : Nextcloud, Drive…) si possible, sinon téléchargement. */
+async function saveBlob(blob, name) {
+  const file = new File([blob], name, { type: blob.type });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: name }); return 'shared'; }
+    catch (err) { if (err && err.name === 'AbortError') return 'cancel'; }
+  }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+  return 'downloaded';
+}
 $('btn-backup').addEventListener('click', async () => {
   const d = new Date(), pad = n => String(n).padStart(2, '0');
   const name = 'qcm-sauvegarde-' + d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + '-' + pad(d.getHours()) + 'h' + pad(d.getMinutes()) + '.json';
@@ -1745,7 +2136,7 @@ $('in-restore').addEventListener('change', async e => {
 });
 $('bk-zone').addEventListener('click', async e => {
   if (e.target.id === 'btn-bk-cancel') { app.bk = null; $('bk-zone').innerHTML = ''; }
-  if (e.target.id === 'btn-bk-apply' && app.bk) { D.applyRestore(app.state, app.bk); app.bk = null; await persist(); msg('bk-zone', 'ok', '<b>Sauvegarde fusionnée.</b>'); }
+  if (e.target.id === 'btn-bk-apply' && app.bk) { await D.snapshot(app.state, 'avant la fusion d\'une sauvegarde'); D.applyRestore(app.state, app.bk); app.bk = null; await persist(); msg('bk-zone', 'ok', '<b>Sauvegarde fusionnée.</b>'); }
 });
 
 // ---------------- démarrage ----------------
