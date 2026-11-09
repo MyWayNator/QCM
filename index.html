@@ -142,8 +142,8 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
     <nav class="tabs" role="tablist">
       <button role="tab" id="tab-eleves" aria-selected="false" data-view="eleves">Élèves</button>
       <button role="tab" id="tab-modele" aria-selected="true" data-view="modele">Évaluations</button>
-      <button role="tab" id="tab-copies" aria-selected="false" data-view="copies">Copies</button>
-      <button role="tab" id="tab-bilan" aria-selected="false" data-view="bilan">Bilan<span class="count" id="bilan-count">0</span></button>
+      <button role="tab" id="tab-correction" aria-selected="false" data-view="correction">Correction<span class="count" id="cor-count"></span></button>
+      <button role="tab" id="tab-reglages" aria-selected="false" data-view="reglages">Réglages</button>
     </nav>
   </div>
 </header>
@@ -242,32 +242,34 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
     </div>
   </section>
 
-  <!-- ====================== COPIES ====================== -->
-  <section class="view" id="view-copies" hidden>
-    <div>
-      <h2>Les copies</h2>
-      <p class="muted">Une copie par photo. Touchez une case pour corriger la lecture : automatique, cochée, vide.</p>
+  <!-- ====================== CORRECTION ====================== -->
+  <section class="view" id="view-correction" hidden>
+    <div id="cor-add" style="display:flex;flex-direction:column;gap:8px">
+      <h2>Corriger des copies</h2>
+      <p class="muted">Photographiez les copies à la suite, puis envoyez-les toutes. Le QR code indique l'élève, l'évaluation et la version.</p>
+      <div class="actions">
+        <label class="btn primary" for="in-cor-files">Choisir les photos<input type="file" id="in-cor-files" accept="image/*" multiple></label>
+        <label class="btn" for="in-cor-cam">Photographier une copie<input type="file" id="in-cor-cam" accept="image/*" capture="environment"></label>
+        <label class="btn" for="in-cor-pdf">PDF scanné<input type="file" id="in-cor-pdf" accept="application/pdf,.pdf"></label>
+      </div>
     </div>
-    <div id="copy-ev"></div>
-    <div class="actions">
-      <label class="btn primary" for="in-copy-cam">Photographier une copie<input type="file" id="in-copy-cam" accept="image/*" capture="environment"></label>
-      <label class="btn" for="in-copy-file">Choisir des images<input type="file" id="in-copy-file" accept="image/*" multiple></label>
-    </div>
-    <div class="actions" id="copy-samples">
-      <span class="muted small" style="align-self:center">Exemples :</span>
-      <button class="btn small" type="button" data-sample="croix">copie aux croix</button>
-      <button class="btn small" type="button" data-sample="hachures">copie hachurée</button>
-      <button class="btn small" type="button" data-sample="vierge">copie vierge</button>
-    </div>
-    <div id="copy-status"></div>
+    <div id="cor-progress"></div>
+    <div id="cor-inbox"></div>
+    <div id="cor-list" style="display:flex;flex-direction:column;gap:10px"></div>
+    <div id="cor-session" hidden style="display:flex;flex-direction:column;gap:12px"></div>
 
-    <div id="copy-zone" hidden style="display:flex;flex-direction:column;gap:16px">
+    <div id="copy-zone" hidden style="display:flex;flex-direction:column;gap:12px">
+      <div id="copy-nav" class="actions"></div>
+      <div>
+        <h2 id="copy-who"></h2>
+        <p class="muted small" id="copy-meta"></p>
+      </div>
       <div class="score">
         <span class="big" id="copy-score"></span>
         <span class="sub" id="copy-sub"></span>
       </div>
       <div id="copy-issues"></div>
-      <div class="figure">
+      <div class="figure" id="copy-fig">
         <canvas id="cv-copy" aria-label="Copie redressée avec la lecture des cases"></canvas>
         <div class="cap">
           <div class="legend">
@@ -279,37 +281,34 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
           <label class="small"><input type="checkbox" id="show-fill"> taux de remplissage</label>
         </div>
       </div>
+      <div id="copy-grid"></div>
       <div class="tablewrap">
         <table>
           <thead><tr><th>Question</th><th>Lu</th><th>Attendu</th><th>État</th><th class="num">Points</th></tr></thead>
           <tbody id="copy-table"></tbody>
         </table>
       </div>
+      <div id="copy-actions" class="actions"></div>
     </div>
   </section>
 
-  <!-- ====================== BILAN ====================== -->
-  <section class="view" id="view-bilan" hidden>
-    <div>
-      <h2>3. Fiabilité mesurée</h2>
-      <p class="muted">« Ouvrir » réaffiche une copie pour la vérifier ou la corriger. Chaque case que vous corrigez à la main compte comme une erreur de lecture. C'est la mesure demandée au §18 du cahier des charges.</p>
-    </div>
-    <div class="stats" id="stats"></div>
-    <div class="tablewrap">
-      <table>
-        <thead><tr><th>#</th><th>Copie</th><th class="num">Note</th><th class="num">Incertaines</th><th class="num">Corrigées</th><th class="num">Durée</th></tr></thead>
-        <tbody id="log-table"></tbody>
-      </table>
-    </div>
-    <div class="actions">
-      <button class="btn primary" type="button" id="btn-copy-log">Copier les mesures</button>
-      <button class="btn" type="button" id="btn-clear-log">Effacer le bilan</button>
-    </div>
-    <div id="log-msg"></div>
+  <!-- ====================== RÉGLAGES ====================== -->
+  <section class="view" id="view-reglages" hidden>
+    <div><h2>Réglages</h2><p class="muted">Ces réglages s'appliquent à toutes les évaluations et séances de cet appareil.</p></div>
+    <div class="tablewrap"><table><tbody>
+      <tr><th style="white-space:normal">Suppression automatique des photos des copies</th><td><input type="number" id="set-retention" min="1" max="365" step="1"> jours après la dernière correction</td></tr>
+      <tr><th style="white-space:normal">Mode de correction des nouvelles séances</th><td><select id="set-mode"><option value="mixte">Mixte : seules les copies incertaines sont à vérifier</option><option value="validation">Validation de chaque copie</option></select></td></tr>
+    </tbody></table></div>
+    <p class="small muted">À la clôture d'une séance (à la main, ou automatiquement après ce délai), les photos sont supprimées de l'appareil. Les réponses lues et les notes restent. Les photos ne sont jamais incluses dans les sauvegardes.</p>
     <details>
-      <summary>Mesures détaillées (à me transmettre)</summary>
-      <p class="muted small" style="margin-block:8px">Taux de remplissage de chaque case, sans image ni nom d'élève.</p>
-      <textarea id="log-json" readonly></textarea>
+      <summary>Mesures techniques d'une séance (pour le réglage de la reconnaissance)</summary>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+        <p class="small muted">Taux de remplissage de chaque case et corrections faites à la main, sans nom d'élève ni image.</p>
+        <select id="set-measure-ses"></select>
+        <div class="actions"><button class="btn" type="button" id="btn-copy-log">Copier les mesures</button></div>
+        <div id="log-msg"></div>
+        <textarea id="log-json" readonly></textarea>
+      </div>
     </details>
   </section>
 </main>
@@ -558,7 +557,7 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
   }
 
   /** Taux d'encre à l'intérieur de la case (0..1), en excluant le trait imprimé. */
-  function measureBox(ctx, b, dx = 0, dy = 0, k = 0.62) {
+  function measureBox(ctx, b, dx = 0, dy = 0, k = 0.58) {
     const { gray, rgba, W, H } = ctx;
     const cx = b.x + dx, cy = b.y + dy, hw = b.w / 2, hh = b.h / 2;
     // niveau du papier : médiane d'un cadre autour de la case
@@ -632,11 +631,12 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
     // trait vertical entre deux cases voisines de la même ligne ?
     const ruleBetween = (A, B) => {
       const h = Math.max(A.h, B.h), cy = (A.y + B.y) / 2;
-      const y0 = Math.round(cy - 1.3 * h), y1 = Math.round(cy + 1.3 * h);
+      // trait vertical sur toute la hauteur de la case et un peu au-delà (tolère un trait légèrement penché ou flou)
+      const y0 = Math.round(cy - 1.0 * h), y1 = Math.round(cy + 1.0 * h);
       for (let x = Math.round(A.x + A.w / 2 + 2); x <= B.x - B.w / 2 - 2; x++) {
         let n = 0;
-        for (let y = y0; y <= y1; y++) if (ink(x - 1, y) || ink(x, y) || ink(x + 1, y)) n++;
-        if (n >= (y1 - y0 + 1) * 0.9) return true;
+        for (let y = y0; y <= y1; y++) if (ink(x - 2, y) || ink(x - 1, y) || ink(x, y) || ink(x + 1, y) || ink(x + 2, y)) n++;
+        if (n >= (y1 - y0 + 1) * 0.85) return true;
       }
       return false;
     };
@@ -678,6 +678,36 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
     return { warped: warp(cv, rgba, o, geo), geo, markers: o };
   }
 
+  /** Lit le QR code d'une copie : on redresse la photo, puis on cherche dans la zone prévue sous le repère haut-gauche.
+      jsQR : la fonction de la bibliothèque jsQR. Retourne { text } (text = null si illisible) ou { error }. */
+  function readQR(cv, rgba, jsQR) {
+    const p = prepare(cv, rgba, null);
+    if (p.error) return { error: p.error, nMarkers: p.nMarkers };
+    const W = p.warped.cols, H = p.warped.rows;
+    const pad = 10 * PX_MM;
+    const x0 = Math.max(0, Math.round(QR_ZONE.x0 - pad)), y0 = Math.max(0, Math.round(QR_ZONE.y0 - pad));
+    const x1 = Math.min(W, Math.round(QR_ZONE.x1 + pad)), y1 = Math.min(H, Math.round(QR_ZONE.y1 + pad));
+    const tryMat = m => { const d = new Uint8ClampedArray(m.data.buffer.slice(m.data.byteOffset, m.data.byteOffset + m.data.byteLength)); const r = jsQR(d, m.cols, m.rows, { inversionAttempts: 'dontInvert' }); return r ? r.data : null; };
+    const zone = m => {
+      const roi = m.roi(new cv.Rect(x0, y0, x1 - x0, y1 - y0)), crop = roi.clone(); roi.delete();
+      let t = tryMat(crop);
+      if (!t) { const big = new cv.Mat(); cv.resize(crop, big, new cv.Size(crop.cols * 2, crop.rows * 2), 0, 0, cv.INTER_CUBIC); t = tryMat(big); big.delete(); }
+      crop.delete(); return t;
+    };
+    let text = zone(p.warped);
+    // photo à l'envers : le QR est alors en bas à droite de l'image redressée
+    if (!text) { const r2 = new cv.Mat(); cv.rotate(p.warped, r2, cv.ROTATE_180); text = zone(r2); r2.delete(); }
+    p.warped.delete();
+    return { text };
+  }
+
+  function glued(ctx, b) {
+    const { gray, W, H } = ctx, r = b.w / 2, cy = Math.round(b.y);
+    const paper = median([gray.ucharAt(Math.max(0, cy - Math.round(1.8 * r)), Math.round(b.x)), gray.ucharAt(Math.min(H - 1, cy + Math.round(1.8 * r)), Math.round(b.x)), 200]);
+    const side = sgn => { let n = 0; for (let d = 2; d <= 5; d++) for (let y = cy - Math.round(r / 2); y <= cy + Math.round(r / 2); y++) { const x = Math.round(b.x + sgn * (r + d)); if (x >= 0 && x < W && gray.ucharAt(y, x) < paper - 50) n++; } return n >= 3; };
+    return side(1) && side(-1);
+  }
+
   /** Construit un modèle à partir d'un exemplaire corrigé. */
   function buildTemplate(cv, rgba) {
     const p = prepare(cv, rgba, null); if (p.error) return p;
@@ -689,6 +719,8 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
     for (let i = boxes.length - 1; i >= 0; i--) {
       const b = boxes[i];
       if (b.shape === 'circle' && b.fill > 0.12 && b.fill < 0.5 && measureBox(ctx, b, 0, 0, 0.3).fill < 0.75 * b.fill) boxes.splice(i, 1);
+      // lettre « O » dans un mot : de l'encre collée à droite ET à gauche (les cases de réponse sont séparées du texte par une espace)
+      else if (b.shape === 'circle' && b.fill > 0.12 && glued(ctx, b)) boxes.splice(i, 1);
     }
     const byId = Object.fromEntries(boxes.map(b => [b.id, b]));
     let questions = splitTableCells(cv, ctx, groupQuestions(boxes), byId);
@@ -780,7 +812,7 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
   }
 
   root.QCMCore = { findMarkers, estimateAspect, warp, canonSize, detectBoxes, makeMeasureCtx, freeMeasureCtx, measureBox, refineBox,
-    buildTemplate, readCopy, QR_ZONE, scoreAnswers, classify, groupQuestions, TH, CANON_W, MARGIN, _u: { del, median } };
+    buildTemplate, readCopy, readQR, QR_ZONE, scoreAnswers, classify, groupQuestions, TH, CANON_W, MARGIN, _u: { del, median } };
   if (typeof module !== 'undefined') module.exports = root.QCMCore;
 })(typeof self !== 'undefined' ? self : globalThis);
 </script>
@@ -961,7 +993,7 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
   function newEvaluation(state, name, opts = {}) {
     let id; do id = 'E' + newId(); while (state.evaluations[id]);
     const t = nowIso();
-    const ev = { id, name: name || 'Évaluation', created: t, updated: t, scale: 20, rounding: 0.5, sameLayout: true, sample: !!opts.sample, versions: {} };
+    const ev = { id, name: name || 'Évaluation', created: t, updated: t, scale: null, rounding: 0.5, sameLayout: true, sample: !!opts.sample, versions: {} };
     state.evaluations[id] = ev;
     return ev;
   }
@@ -971,8 +1003,10 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
   function listEvaluations(state) {
     return Object.values(state.evaluations || {}).filter(e => !e.deleted).sort((a, b) => (b.updated || '').localeCompare(a.updated || ''));
   }
-  /** Note finale : conversion proportionnelle sans arrondi intermédiaire, puis arrondi au pas choisi (demi supérieur, §9). */
+  /** Note finale : conversion proportionnelle sans arrondi intermédiaire, puis arrondi au pas choisi (demi supérieur, §9).
+      scale vide = note sur le total des points du barème, sans conversion ni arrondi. */
   function finalGrade(score, total, scale, step) {
+    if (!scale) return Math.round(score * 100) / 100;
     if (!total) return 0;
     const raw = score / total * scale;
     return Math.round(raw / step + 1e-9) * step;
@@ -994,10 +1028,14 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
   }
   /** Associe les cases d'une nouvelle version à celles de la version de référence (même forme, la plus proche).
       Retourne null si la structure diffère (une case sans correspondant). */
-  function matchVersionBoxes(refBoxes, newBoxes, maxDist = 110) {
+  // deux photos donnent des repères normalisés d'échelles un peu différentes : on ramène la nouvelle à l'échelle de la référence
+  const MARGIN0 = 40;
+  const toRef = (b, f) => ({ x: MARGIN0 + (b.x - MARGIN0) * f, y: MARGIN0 + (b.y - MARGIN0) * f });
+  function matchVersionBoxes(refBoxes, newBoxes, maxDist = 110, f = 1) {
     const pairs = [];
     for (const a of refBoxes) for (const b of newBoxes) if (a.shape === b.shape) {
-      const d = Math.hypot(a.x - b.x, (a.y - b.y) * 2); // un décalage vertical compte double : les lignes ne bougent guère
+      const n = toRef(b, f);
+      const d = Math.hypot(a.x - n.x, (a.y - n.y) * 2); // un décalage vertical compte double : les lignes ne bougent guère
       if (d < maxDist) pairs.push({ a, b, d });
     }
     pairs.sort((p, q) => p.d - q.d);
@@ -1008,12 +1046,14 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
   }
   /** Nouvelle version de même structure : questions, points et barème de la référence ; positions et bonnes réponses relevées sur son corrigé. */
   function versionFromMatch(tpl, map, newTpl) {
+    const f = tpl.geo && newTpl.geo ? tpl.geo.cw / newTpl.geo.cw : 1;
     const c = JSON.parse(JSON.stringify(tpl));
     c.geo = newTpl.geo;
     let moved = 0;
     for (const b of c.boxes) {
       const m = map[b.id];
-      if (Math.hypot(m.x - b.x, m.y - b.y) > 6) moved++;
+      const n = toRef(m, f);
+      if (Math.hypot(n.x - b.x, n.y - b.y) > 15) moved++;
       Object.assign(b, { x: m.x, y: m.y, w: m.w, h: m.h, refState: m.refState, refFill: m.refFill });
     }
     for (const q of c.questions) q.correct = q.boxes.filter(id => map[id].refState === 'coche');
@@ -1028,9 +1068,59 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
     return c;
   }
 
-  // ---------- 5. Sauvegardes ----------
+  // ---------- 5. Séances et résultats ----------
+  const DEFAULT_SETTINGS = { retentionDays: 30, defaultMode: 'mixte' };
+  const settings = state => Object.assign({}, DEFAULT_SETTINGS, state.settings || {});
+  /** Séance d'une évaluation pour une classe : la plus récente, rouverte si besoin ; créée sinon. */
+  function sessionFor(state, ev, classe) {
+    state.sessions = state.sessions || {};
+    const ex = Object.values(state.sessions).filter(x => x.evalId === ev.id && x.classe === classe && !x.deleted).sort((a, b) => b.created.localeCompare(a.created))[0];
+    if (ex) { if (ex.closed) { ex.closed = null; ex.updated = nowIso(); } return ex; }
+    let id; do id = 'S' + newId(); while (state.sessions[id]);
+    const t = nowIso();
+    return (state.sessions[id] = { id, evalId: ev.id, classe, created: t, updated: t, mode: settings(state).defaultMode, absent: {}, closed: null });
+  }
+  const resultId = (sessionId, studentId) => sessionId + ':' + studentId;
+  const sessionResults = (state, sid) => Object.values(state.results || {}).filter(r => r.sessionId === sid);
+  /** Réponses effectives (lecture + corrections manuelles) et note, avec le barème actuel. */
+  function scoreResult(Q, ev, r) {
+    const v = ev && ev.versions[r.version], tpl = v && v.tpl;
+    if (!tpl || r.rescan) return null;
+    const boxes = {};
+    for (const b of tpl.boxes) {
+      const x = (r.boxes || {})[b.id] || { state: 'vide', fill: 0 };
+      boxes[b.id] = Object.assign({ id: b.id }, x, r.manual && r.manual[b.id] ? { manual: r.manual[b.id] } : {});
+    }
+    const s = Q.scoreAnswers(tpl, boxes);
+    return Object.assign(s, { boxes, tpl, note: finalGrade(s.score, s.total, ev.scale, ev.rounding), scale: ev.scale || s.total });
+  }
+  /** État d'un élève dans une séance (§11). */
+  function studentStatus(state, ses, sid) {
+    const r = state.results && state.results[resultId(ses.id, sid)];
+    if (r) {
+      if (r.rescan) return 'rescan';
+      if (r.validated) return 'ok';
+      if ((r.problems && r.problems.length) || ses.mode === 'validation') return 'check';
+      return 'ok';
+    }
+    return ses.absent && ses.absent[sid] ? 'absent' : 'todo';
+  }
+  /** Recalcule les notes d'une évaluation (barème modifié) ; retourne le nombre de copies et de notes changées. */
+  function refreshNotes(Q, state, ev) {
+    let n = 0, changed = 0;
+    for (const r of Object.values(state.results || {})) {
+      if (r.evalId !== ev.id) continue;
+      const s = scoreResult(Q, ev, r); if (!s) continue;
+      n++;
+      if (r.note !== s.note || r.scale !== s.scale) { if (r.note != null) changed++; r.note = s.note; r.scale = s.scale; r.score = s.score; r.total = s.total; }
+    }
+    return { n, changed };
+  }
+
+  // ---------- 6. Sauvegardes ----------
   function makeBackup(state) {
     const copy = JSON.parse(JSON.stringify(state));
+    delete copy.inbox; // copies non identifiées : leurs images restent sur l'appareil
     copy.backupDate = nowIso();
     return JSON.stringify(copy);
   }
@@ -1056,6 +1146,7 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
   function applyRestore(state, p) {
     const b = p.backup;
     for (const s of p.add.concat(p.update)) state.students[s.id] = s;
+    if (b.settings && !state.settings) state.settings = b.settings;
     for (const c of ['evaluations', 'sessions', 'results']) {
       const src = b[c] || {}; state[c] = state[c] || {};
       for (const k in src) if (!state[c][k] || (src[k].updated || '') > (state[c][k].updated || '')) state[c][k] = src[k];
@@ -1065,7 +1156,7 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
     return state;
   }
 
-  // ---------- 6. Stockage (navigateur) ----------
+  // ---------- 7. Stockage (navigateur) ----------
   const DB = 'qcm-app', STORE = 'kv';
   function idb() {
     return new Promise((res, rej) => {
@@ -1089,7 +1180,17 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
     } catch (e) { return false; }
   }
 
-  // ---------- 7. Instantanés automatiques (retour en arrière) ----------
+  // ---------- 8. Images des copies (sur l'appareil seulement, jamais dans les sauvegardes) ----------
+  async function putImage(k, dataUrl) { try { await kvPut('img:' + k, dataUrl); return true; } catch (e) { return false; } }
+  async function getImage(k) { try { return await kvGet('img:' + k); } catch (e) { return null; } }
+  async function delImage(k) { try { const db = await idb(); await new Promise((res, rej) => { const tx = db.transaction(STORE, 'readwrite'); tx.objectStore(STORE).delete('img:' + k); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); } catch (e) {} }
+  /** Clôture : les photos sont supprimées, réponses et notes restent (§15). */
+  async function closeSession(state, ses) {
+    for (const r of sessionResults(state, ses.id)) if (r.hasImg) { await delImage(r.id); r.hasImg = false; }
+    ses.closed = nowIso(); ses.updated = ses.closed;
+  }
+
+  // ---------- 9. Instantanés automatiques (retour en arrière) ----------
   const MAX_SNAP = 8;
   async function kvGet(k) { const db = await idb(); return new Promise((res, rej) => { const q = db.transaction(STORE).objectStore(STORE).get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); }
   async function kvPut(k, v) { const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction(STORE, 'readwrite'); tx.objectStore(STORE).put(v, k); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); }
@@ -1104,6 +1205,7 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
   async function listSnapshots() { try { return (await kvGet('snapshots')) || []; } catch (e) { return []; } }
 
   root.QCMData = { emptyState, decodeText, parseCSV, detectColumns, planImport, applyImport, classesOf, compareClasses, level, displayFirst,
+    sessionFor, resultId, sessionResults, scoreResult, studentStatus, refreshNotes, settings, putImage, getImage, delImage, closeSession,
     newEvaluation, listEvaluations, versionLabels, readyLabels, snapshot, listSnapshots, nextLabel, finalGrade, propagateLayout, versionFromReading, matchVersionBoxes, versionFromMatch,
     makeBackup, planRestore, duplicates, excludeStudent, markDistinct, applyRestore, load, save, newId, norm, FORMAT };
   if (typeof module !== 'undefined') module.exports = root.QCMData;
@@ -1118,7 +1220,8 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
     pdfjs: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
     pdfjsWorker: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js',
     pdflib: 'https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js',
-    qr: 'https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js'
+    qr: 'https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js',
+    jsqr: 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js'
   };
   const MM = 72 / 25.4;          // points par millimètre
   const QR_MM = 20;              // côté du QR code
@@ -1176,6 +1279,21 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
       pages.push({ index: i - 1, width: page.view[2] - page.view[0], height: H, slots: sets, thumb: c.toDataURL('image/jpeg', 0.6) });
     }
     return { numPages: doc.numPages, pages };
+  }
+
+  async function jsQR() { await loadScript(LIBS.jsqr); return root.jsQR; }
+  /** Pages d'un PDF scanné, une à une, en images (≈ 180 ppp). */
+  async function* pdfPages(bytes, scale = 2.5) {
+    const { pdfjs } = await libs();
+    const doc = await pdfjs.getDocument({ data: bytes.slice(0) }).promise;
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i);
+      const vp = page.getViewport({ scale });
+      const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+      const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+      await page.render({ canvasContext: ctx, viewport: vp }).promise;
+      yield { canvas: c, index: i, total: doc.numPages };
+    }
   }
 
   /** Texte compatible avec les polices standard du PDF (WinAnsi) : on retire seulement ce qui n'y entre pas. */
@@ -1249,7 +1367,7 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
         const tx = x + size + 4 * MM, maxW = Math.max(60, (sl.tr.x - sl.tl.x) * 0.55 - size);
         const name = safeText(bold, j.student.nom.toUpperCase() + ' ' + (j.student.usage || j.student.prenom));
         pg.drawText(fitText(bold, name, 13, maxW), { x: tx, y: yTop - 12, size: 13, font: bold, color: rgb(0, 0, 0) });
-        pg.drawText(fitText(reg, safeText(reg, classe), 10, maxW), { x: tx, y: yTop - 27, size: 10, font: reg, color: rgb(0.2, 0.2, 0.2) });
+        pg.drawText(fitText(reg, safeText(reg, j.student.classe || classe), 10, maxW), { x: tx, y: yTop - 27, size: 10, font: reg, color: rgb(0.2, 0.2, 0.2) });
         if (multi) pg.drawText('Version ' + j.version, { x: tx, y: yTop - 40, size: 10, font: reg, color: rgb(0.2, 0.2, 0.2) });
       });
       done += sh.list.length; if (onProgress) onProgress(done, jobs.length);
@@ -1269,7 +1387,7 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
     return c;
   }
 
-  root.QCMPrint = { libs, analyzeSubjectPdf, buildClassPdf, renderFirstPage, groupMarkerSets, qrPayload, parsePayload, LIBS, QR_MM };
+  root.QCMPrint = { libs, jsQR, pdfPages, analyzeSubjectPdf, buildClassPdf, renderFirstPage, groupMarkerSets, qrPayload, parsePayload, LIBS, QR_MM };
 })(typeof self !== 'undefined' ? self : globalThis);
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@techstark/opencv-js@5.0.0-release.1/dist/opencv.js" async id="cv-script"></script>
@@ -1304,8 +1422,9 @@ const store = {
 // ---------------- onglets ----------------
 function show(view) {
   for (const b of document.querySelectorAll('nav.tabs button')) b.setAttribute('aria-selected', String(b.dataset.view === view));
-  for (const v of ['eleves', 'modele', 'copies', 'bilan']) $('view-' + v).hidden = v !== view;
-  if (view === 'bilan') renderLog();
+  for (const v of ['eleves', 'modele', 'correction', 'reglages']) $('view-' + v).hidden = v !== view;
+  if (view === 'correction') renderCorrection();
+  if (view === 'reglages') renderSettings();
   window.scrollTo({ top: 0 });
 }
 for (const b of document.querySelectorAll('nav.tabs button')) b.addEventListener('click', () => show(b.dataset.view));
@@ -1397,7 +1516,7 @@ async function loadReference(src, fromSample) {
   const others = ev ? D.readyLabels(ev).filter(l => l !== label0) : [];
   if (pend.kind !== 'new' && others.length) {
     const refL = others[0], refT = ev.versions[refL].tpl;
-    const map = ev.sameLayout ? D.matchVersionBoxes(refT.boxes, r.template.boxes) : null;
+    const map = ev.sameLayout ? D.matchVersionBoxes(refT.boxes, r.template.boxes, 110, refT.geo && r.template.geo ? refT.geo.cw / r.template.geo.cw : 1) : null;
     if (map) {
       const vm = D.versionFromMatch(refT, map, r.template);
       ev.versions[label0] = { tpl: vm.tpl, img };
@@ -1436,7 +1555,6 @@ async function selectEvaluation(id, label) {
   if (ev) {
     const labs = D.versionLabels(ev);
     st.version = ev.versions[label] ? label : (D.readyLabels(ev)[0] || labs[0] || 'A');
-    if (!ev.versions[st.copyVersion]) st.copyVersion = st.version;
     if (!app.state.ui || app.state.ui.lastEval !== id) { app.state.ui = Object.assign(app.state.ui || {}, { lastEval: id }); persistSoon(); }
     const v = ev.versions[st.version];
     if (!v || !v.tpl) st.pending = { kind: 'version', label: st.version || 'A' };
@@ -1447,7 +1565,7 @@ async function selectEvaluation(id, label) {
       renderRef();
     }
   }
-  renderEvHead(); renderCopyEval();
+  renderEvHead();
 }
 
 function saveTemplate() {
@@ -1455,7 +1573,13 @@ function saveTemplate() {
   ev.versions[st.version].tpl = st.tpl;
   D.propagateLayout(ev, st.version);
   ev.updated = new Date().toISOString();
+  notesChanged(ev);
   persistSoon();
+}
+/** Barème, échelle ou corrigé modifié : les notes des copies déjà lues sont recalculées. */
+function notesChanged(ev) {
+  const r = D.refreshNotes(Q, app.state, ev);
+  if (r.n) msg('ref-status', r.changed ? 'doubt' : '', '<b>Notes recalculées</b> pour ' + plural(r.n, 'copie', 'copies') + (r.changed ? ' : ' + plural(r.changed, 'note a changé', 'notes ont changé') + '.' : ' : aucune ne change.'));
 }
 
 function renderEvHead() {
@@ -1482,10 +1606,10 @@ function renderEvHead() {
       (D.nextLabel(ev) ? '<button type="button" data-addver="1" aria-pressed="false">＋ Version ' + D.nextLabel(ev) + '</button>' : '') + '</div>' +
       (D.readyLabels(ev).length > 1 ? '<span class="small muted">' + (ev.sameLayout ? 'Même disposition : questions, points et barème communs ; bonnes réponses propres à chaque version.' : 'Dispositions différentes : chaque version a sa propre grille.') + '</span>' : '') + '</div>' +
       '<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:end">' +
-        '<label class="small" style="display:flex;flex-direction:column;gap:4px">Note sur<select id="ev-scale">' + [20, 10, 5].map(v => '<option value="' + v + '"' + (ev.scale === v ? ' selected' : '') + '>' + v + '</option>').join('') +
-          '<option value="custom"' + ([20, 10, 5].includes(ev.scale) ? '' : ' selected') + '>autre</option></select></label>' +
-        ([20, 10, 5].includes(ev.scale) ? '' : '<label class="small" style="display:flex;flex-direction:column;gap:4px">Barème<input type="number" id="ev-scale-custom" min="1" step="1" value="' + ev.scale + '"></label>') +
-        '<label class="small" style="display:flex;flex-direction:column;gap:4px">Arrondi de la note<select id="ev-round">' + [1, 0.5, 0.25].map(v => '<option value="' + v + '"' + (ev.rounding === v ? ' selected' : '') + '>' + ROUND_LABEL[v] + '</option>').join('') + '</select></label>' +
+        '<label class="small" style="display:flex;flex-direction:column;gap:4px">Note sur<select id="ev-scale"><option value="total"' + (!ev.scale ? ' selected' : '') + '>total des points' + (st.tpl ? ' (' + fmt(st.tpl.questions.reduce((t, q) => t + (q.points ?? 1), 0)) + ')' : '') + '</option>' + [20, 10, 5].map(v => '<option value="' + v + '"' + (ev.scale === v ? ' selected' : '') + '>' + v + '</option>').join('') +
+          '<option value="custom"' + (!ev.scale || [20, 10, 5].includes(ev.scale) ? '' : ' selected') + '>autre</option></select></label>' +
+        (!ev.scale || [20, 10, 5].includes(ev.scale) ? '' : '<label class="small" style="display:flex;flex-direction:column;gap:4px">Barème<input type="number" id="ev-scale-custom" min="1" step="1" value="' + ev.scale + '"></label>') +
+        (ev.scale ? '<label class="small" style="display:flex;flex-direction:column;gap:4px">Arrondi de la note<select id="ev-round">' + [1, 0.5, 0.25].map(v => '<option value="' + v + '"' + (ev.rounding === v ? ' selected' : '') + '>' + ROUND_LABEL[v] + '</option>').join('') + '</select></label>' : '') +
       '</div>' +
       '<details' + (st.delArmed ? ' open' : '') + '><summary class="small">Autres actions</summary><div class="actions" style="margin-top:8px">' +
         '<button class="btn small" type="button" id="ev-replace">Rephotographier le corrigé de la version ' + st.version + '</button>' +
@@ -1514,10 +1638,10 @@ $('ev-head').addEventListener('change', async e => {
   if (t.id === 'ev-pick') { st.pending = null; if (t.value === '__new' || !t.value) await selectEvaluation(null); else await selectEvaluation(t.value); return; }
   if (!ev) return;
   if (t.id === 'ev-name') { ev.name = t.value.trim() || ev.name; }
-  if (t.id === 'ev-scale') { ev.scale = t.value === 'custom' ? (ev.scale in { 20: 1, 10: 1, 5: 1 } ? 30 : ev.scale) : +t.value; renderEvHead(); }
+  if (t.id === 'ev-scale') { ev.scale = t.value === 'total' ? null : t.value === 'custom' ? (!ev.scale || [20, 10, 5].includes(ev.scale) ? 30 : ev.scale) : +t.value; renderEvHead(); }
   if (t.id === 'ev-scale-custom') ev.scale = Math.max(1, +t.value || 20);
   if (t.id === 'ev-round') ev.rounding = +t.value;
-  ev.updated = new Date().toISOString(); persistSoon(); renderCopyEval();
+  ev.updated = new Date().toISOString(); notesChanged(ev); persistSoon();
 });
 $('ev-head').addEventListener('click', async e => {
   const ev = curEval(), b = e.target.closest('button'); if (!b || !ev) return;
@@ -1647,6 +1771,7 @@ $('q-list').addEventListener('change', e => {
   if (el.dataset.act === 'type') q.type = el.value;
   if (el.dataset.act === 'points') q.points = Math.max(0, parseFloat(el.value) || 0);
   if (el.dataset.act === 'scoring') q.scoring = el.value;
+  if (el.dataset.act === 'points') setTimeout(renderEvHead, 0);
   saveTemplate(); renderRef();
 });
 
@@ -1711,171 +1836,417 @@ $('in-ref-cam').addEventListener('change', refPicked);
 $('in-ref-file').addEventListener('change', refPicked);
 $('btn-ref-sample').addEventListener('click', () => { st.pending = { kind: 'new' }; loadReference(SAMPLES.ref, true); });
 
-// ---------------- COPIES ----------------
-async function readCopies(list) {
+// ---------------- CORRECTION ----------------
+const cor = { view: 'list', sessionId: null, studentId: null, queue: null, attach: null, delArmed: null, closeArmed: false, img: null };
+const STATUS = { ok: ['corrigée', 'ok'], check: ['à vérifier', 'doubt'], rescan: ['à rescanner', 'bad'], absent: ['absent', ''], todo: ['à corriger', ''] };
+const pill = st0 => '<span class="pill ' + STATUS[st0][1] + '">' + STATUS[st0][0] + '</span>';
+function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]); }
+function fmt(n) { return (Math.round(n * 100) / 100).toLocaleString('fr-FR'); }
+const fmtDay = iso => new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+const sesEval = ses => app.state.evaluations[ses.evalId];
+const sesTitle = ses => (sesEval(ses) ? sesEval(ses).name : 'Évaluation supprimée') + ' — ' + ses.classe;
+
+function sessionStudents(ses) {
+  const list = Object.values(app.state.students).filter(s => s.active && s.classe === ses.classe);
+  const ids = new Set(list.map(s => s.id));
+  for (const r of D.sessionResults(app.state, ses.id)) if (!ids.has(r.studentId) && app.state.students[r.studentId]) { list.push(app.state.students[r.studentId]); ids.add(r.studentId); }
+  return list.sort((a, b) => a.nom.localeCompare(b.nom, 'fr') || a.prenom.localeCompare(b.prenom, 'fr'));
+}
+function sessionCounts(ses) {
+  const c = { ok: 0, check: 0, rescan: 0, absent: 0, todo: 0, n: 0 };
+  for (const s of sessionStudents(ses)) { c[D.studentStatus(app.state, ses, s.id)]++; c.n++; }
+  return c;
+}
+const listSessions = () => Object.values(app.state.sessions || {}).filter(x => !x.deleted).sort((a, b) => (!!a.closed - !!b.closed) || b.updated.localeCompare(a.updated));
+
+// ---- lecture d'une série ----
+function isBlank(canvas) {
+  const m = cv.imread(canvas), g = new cv.Mat(); cv.cvtColor(m, g, cv.COLOR_RGBA2GRAY);
+  const mean = new cv.Mat(), sd = new cv.Mat(); cv.meanStdDev(g, mean, sd);
+  const blank = sd.doubleAt(0, 0) < 12; m.delete(); g.delete(); mean.delete(); sd.delete(); return blank;
+}
+function canvasJpeg(c, maxW, q) {
+  const k = Math.min(1, maxW / c.width), o = document.createElement('canvas');
+  o.width = Math.round(c.width * k); o.height = Math.round(c.height * k); o.getContext('2d').drawImage(c, 0, 0, o.width, o.height);
+  return o.toDataURL('image/jpeg', q);
+}
+async function toInbox(canvas, name, reason, hint) {
+  app.state.inbox = app.state.inbox || {};
+  const id = 'I' + D.newId();
+  await D.putImage('inbox:' + id, canvasJpeg(canvas, 1700, 0.85));
+  app.state.inbox[id] = { id, created: new Date().toISOString(), name, reason, evalId: hint && hint.ev ? hint.ev.id : null, studentId: hint && hint.stu ? hint.stu.id : null, version: hint ? hint.version : null };
+  return { inbox: true };
+}
+let jsqr = null;
+async function processCanvas(canvas, name, forced) {
+  const rgba = cv.imread(canvas);
+  try {
+    let info = forced;
+    if (!info) {
+      if (!jsqr) jsqr = await P.jsQR();
+      const q = Q.readQR(cv, rgba, jsqr);
+      if (q.error) return isBlank(canvas) ? { skip: true } : toInbox(canvas, name, 'Les quatre repères ne sont pas trouvés : photo à refaire, ou attribuez-la à la main.');
+      const pl = P.parsePayload(q.text);
+      if (!pl) return toInbox(canvas, name, q.text ? 'QR code inconnu (autre application).' : 'QR code absent ou illisible.');
+      const ev = app.state.evaluations[pl.evId], stu = app.state.students[pl.studentId];
+      if (!ev || ev.deleted) return toInbox(canvas, name, 'Évaluation inconnue sur cet appareil : restaurez la sauvegarde qui la contient.');
+      if (!stu) return toInbox(canvas, name, 'Élève inconnu sur cet appareil : importez la liste de sa classe.', { ev, version: pl.version });
+      info = { ev, stu, version: pl.version };
+    }
+    const { ev, stu, version } = info;
+    const tpl = ev.versions[version] && ev.versions[version].tpl;
+    if (!tpl) return toInbox(canvas, name, 'Le corrigé de la version ' + version + ' de « ' + ev.name + ' » n\'est pas encore photographié.', info);
+    const ses = D.sessionFor(app.state, ev, stu.classe || 'sans classe');
+    const rid = D.resultId(ses.id, stu.id), prev = app.state.results[rid], now = new Date().toISOString();
+    const t0 = performance.now(), res = Q.readCopy(cv, rgba, tpl), ms = Math.round(performance.now() - t0);
+    const r = { id: rid, sessionId: ses.id, evalId: ev.id, studentId: stu.id, version, created: now, updated: now, source: name, ms, boxes: {}, manual: {}, log: [], problems: [], validated: null, hasImg: false };
+    if (prev && !prev.rescan) r.problems.push('Nouvelle photo : elle remplace la copie lue le ' + fmtDay(prev.created).replace(/\.$/, '') + '.');
+    let img;
+    if (res.error && prev && !prev.rescan) return toInbox(canvas, name, 'Copie illisible pour ' + stu.nom + ' ' + D.displayFirst(stu) + ' : la copie déjà lue le ' + fmtDay(prev.created).replace(/\.$/, '') + ' est conservée.', info);
+    if (res.error) { r.rescan = true; r.error = res.error; img = canvasJpeg(canvas, 1000, 0.7); }
+    else {
+      for (const b of Object.values(res.boxes)) r.boxes[b.id] = { state: b.state, fill: Math.round(b.fill * 1000) / 1000, dx: Math.round(b.dx * 10) / 10, dy: Math.round(b.dy * 10) / 10, outline: Math.round(b.outline), lost: !!b.lost };
+      if (res.rotated) r.rotated = true;
+      const wc = matToCanvas(res.warped); res.warped.delete();
+      img = canvasJpeg(wc, 1100, 0.72);
+      const sc = D.scoreResult(Q, ev, r);
+      const nd = Object.values(r.boxes).filter(b => b.state === 'doute').length;
+      if (nd) r.problems.push(nd + ' case' + (nd > 1 ? 's incertaines' : ' incertaine') + '.');
+      const multi = sc.questions.filter(q => q.status === 'multiple');
+      if (multi.length) r.problems.push('Plusieurs cases cochées pour une réponse unique : question ' + multi.map(q => q.id).join(', ') + '.');
+      Object.assign(r, { note: sc.note, scale: sc.scale, score: sc.score, total: sc.total });
+    }
+    r.hasImg = await D.putImage(rid, img);
+    app.state.results[rid] = r;
+    ses.updated = now; if (ses.absent) delete ses.absent[stu.id];
+    await D.save(app.state);
+    return { result: r, ses };
+  } finally { rgba.delete(); }
+}
+async function addCopies(items) {
   if (!cv) return;
-  const ev = curEval(), tplC = ev && ev.versions[st.copyVersion] && ev.versions[st.copyVersion].tpl;
-  if (!tplC) { msg('copy-status', 'bad', '<b>Il faut d\'abord une évaluation.</b> Ouvrez l\'onglet Évaluations et photographiez le corrigé.'); return; }
-  for (let k = 0; k < list.length; k++) {
-    const { src, name } = list[k];
-    busy('copy-status', 'Lecture de la copie' + (list.length > 1 ? ' ' + (k + 1) + ' sur ' + list.length : '') + '…');
+  const touched = new Set(); let nOk = 0, nCheck = 0, nRescan = 0, nInbox = 0, nSkip = 0;
+  for (let k = 0; k < items.length; k++) {
+    busy('cor-progress', 'Lecture de la copie ' + (k + 1) + (items.length > 1 ? ' sur ' + items.length : '') + '…');
     await tick();
     let canvas;
-    try { canvas = await fileToCanvas(src); } catch (e) { msg('copy-status', 'bad', '<b>' + name + ' : image illisible.</b>'); continue; }
-    const rgba = cv.imread(canvas);
-    const t0 = performance.now();
-    const res = Q.readCopy(cv, rgba, tplC);
-    const ms = Math.round(performance.now() - t0);
-    rgba.delete();
-    if (res.error) {
-      st.log.push({ name, error: res.error, ms, t: new Date().toISOString() });
-      msg('copy-status', 'bad', '<b>' + escapeHtml(name) + '</b> — ' + markerHelp(res.error, res.nMarkers) + ' Copie notée « à rescanner ».');
-      if (!st.copy) $('copy-zone').hidden = true;
-      renderCount();
-      continue;
-    }
-    const canvasW = matToCanvas(res.warped); res.warped.delete(); delete res.warped;
-    const entry = { name, ms, t: new Date().toISOString(), rotated: res.rotated, boxes: {}, manual: 0 };
-    for (const b of Object.values(res.boxes)) entry.boxes[b.id] = { fill: Math.round(b.fill * 1000) / 1000, state: b.state, outline: Math.round(b.outline) };
-    st.log.push(entry);
-    entry.evalId = ev.id; entry.version = st.copyVersion;
-    st.copy = { res, canvas: canvasW, name, entry, tpl: tplC, ev };
-    // on garde chaque copie (image compressée) pour pouvoir la rouvrir depuis le Bilan
-    entry._copy = { res, img: canvasW.toDataURL('image/jpeg', 0.75), name, entry, tpl: tplC, ev };
-    $('copy-status').innerHTML = '';
-    renderCopy();
-    renderCount();
+    try { canvas = await items[k].get(); } catch (e) { nInbox++; continue; }
+    if (!canvas) continue;
+    let out;
+    try { out = await processCanvas(canvas, items[k].name); } catch (e) { out = await toInbox(canvas, items[k].name, 'Erreur de lecture : ' + (e.message || e)); }
+    if (out.skip) { nSkip++; continue; }
+    if (out.inbox) { nInbox++; continue; }
+    touched.add(out.ses.id);
+    const s0 = D.studentStatus(app.state, out.ses, out.result.studentId);
+    if (s0 === 'ok') nOk++; else if (s0 === 'rescan') nRescan++; else nCheck++;
   }
+  await persist();
+  const parts = [];
+  if (nOk) parts.push(plural(nOk, 'corrigée', 'corrigées'));
+  if (nCheck) parts.push(nCheck + ' à vérifier');
+  if (nRescan) parts.push(nRescan + ' à rescanner');
+  if (nInbox) parts.push(plural(nInbox, 'copie à attribuer à la main', 'copies à attribuer à la main'));
+  if (nSkip) parts.push(plural(nSkip, 'page blanche ignorée', 'pages blanches ignorées'));
+  msg('cor-progress', nCheck || nRescan || nInbox ? 'doubt' : 'ok', '<b>' + plural(items.length, 'image lue', 'images lues') + '</b> : ' + (parts.join(', ') || 'rien à corriger') + '.');
+  if (touched.size === 1) openSession([...touched][0]); else { cor.view = 'list'; renderCorrection(); }
 }
-function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]); }
+const fileItems = fs => fs.map(f => ({ name: f.name || 'photo', get: () => fileToCanvas(f) }));
+$('in-cor-files').addEventListener('change', e => { const fs = [...e.target.files]; e.target.value = ''; if (fs.length) addCopies(fileItems(fs)); });
+$('in-cor-cam').addEventListener('change', e => { const fs = [...e.target.files]; e.target.value = ''; if (fs.length) addCopies(fileItems(fs)); });
+$('in-cor-pdf').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f || !cv) return;
+  busy('cor-progress', 'Ouverture du PDF…');
+  try {
+    const bytes = new Uint8Array(await f.arrayBuffer()), canvases = [];
+    for await (const pg of P.pdfPages(bytes)) { busy('cor-progress', 'Préparation de la page ' + pg.index + ' sur ' + pg.total + '…'); canvases.push(pg.canvas); }
+    addCopies(canvases.map((c, i) => ({ name: f.name + ' p. ' + (i + 1), get: async () => c })));
+  } catch (err) { msg('cor-progress', 'bad', '<b>PDF illisible.</b> ' + escapeHtml(err.message || err)); }
+});
 
-function rescore() {
-  const c = st.copy; const s = Q.scoreAnswers(c.tpl, c.res.boxes);
-  Object.assign(c.res, s);
-  const e = c.entry;
-  e.manual = Object.values(c.res.boxes).filter(b => b.manual && b.manual !== b.state).length;
-  e.doubts = Object.values(c.res.boxes).filter(b => b.state === 'doute').length;
-  e.score = s.score; e.total = s.total;
-  e.corrections = Object.values(c.res.boxes).filter(b => b.manual).map(b => ({ id: b.id, lu: b.state, corrige: b.manual }));
+// ---- affichage ----
+function renderCorrection() {
+  const open = listSessions().filter(x => !x.closed);
+  const todoCheck = open.reduce((t, x) => t + sessionCounts(x).check, 0);
+  $('cor-count').textContent = todoCheck ? todoCheck : '';
+  renderInbox();
+  $('cor-list').hidden = cor.view !== 'list'; $('cor-session').hidden = cor.view !== 'session'; $('copy-zone').hidden = cor.view !== 'copy';
+  $('cor-add').hidden = cor.view === 'copy';
+  if (cor.view === 'list') renderSessionList();
+  else if (cor.view === 'session') renderSession();
+  else renderCopyView();
 }
+function renderSessionList() {
+  const list = listSessions();
+  $('cor-list').innerHTML = '<h3>Séances</h3>' + (list.length ? list.map(x => {
+    const c = sessionCounts(x);
+    return '<button type="button" class="q" data-ses="' + x.id + '" style="text-align:left;cursor:pointer;font:inherit;color:inherit;grid-template-columns:1fr"><div class="body"><div class="line"><b>' + eh(sesTitle(x)) + '</b>' + (x.closed ? '<span class="pill">close</span>' : '') + '</div>' +
+      '<div class="line small muted">' + fmtDay(x.created) + ' · ' + c.ok + ' / ' + c.n + ' corrigées' + (c.check ? ' · <span style="color:var(--doubt)">' + c.check + ' à vérifier</span>' : '') + (c.rescan ? ' · <span style="color:var(--bad)">' + c.rescan + ' à rescanner</span>' : '') + (c.absent ? ' · ' + c.absent + ' absent' + (c.absent > 1 ? 's' : '') : '') + '</div></div></button>';
+  }).join('') : '<p class="muted small">Aucune séance pour l\'instant. Elle se crée toute seule à la lecture du premier QR code d\'une classe.</p>');
+}
+$('cor-list').addEventListener('click', e => { const b = e.target.closest('[data-ses]'); if (b) openSession(b.dataset.ses); });
+function openSession(id) { cor.view = 'session'; cor.sessionId = id; cor.queue = null; cor.closeArmed = false; show('correction'); window.scrollTo({ top: 0 }); }
 
-function fmt(n) { return (Math.round(n * 100) / 100).toLocaleString('fr-FR'); }
+function renderSession() {
+  const ses = app.state.sessions[cor.sessionId]; if (!ses) { cor.view = 'list'; return renderCorrection(); }
+  const ev = sesEval(ses), c = sessionCounts(ses), studs = sessionStudents(ses);
+  let h = '<div class="actions"><button class="btn small" type="button" data-act="back">← Toutes les séances</button></div>' +
+    '<div><h2>' + eh(ev ? ev.name : 'Évaluation supprimée') + '</h2><p class="muted">' + eh(ses.classe) + ' · commencée le ' + fmtDay(ses.created) + (ses.closed ? ' · <b>close le ' + fmtDay(ses.closed) + '</b> (photos supprimées)' : '') + '</p></div>';
+  h += '<div class="stats">' + [[c.ok + ' / ' + c.n, 'corrigées'], [c.check, 'à vérifier'], [c.rescan, 'à rescanner'], [c.absent, 'absents'], [c.todo, 'à corriger']].map(([v, l]) => '<div class="stat"><div class="v">' + v + '</div><div class="l">' + l + '</div></div>').join('') + '</div>';
+  h += '<div class="actions">' + (c.check ? '<button class="btn primary" type="button" data-act="review">' + (c.check > 1 ? 'Revoir les ' + c.check + ' copies à vérifier' : 'Revoir la copie à vérifier') + '</button>' : '') +
+    '<label class="small" style="display:flex;gap:6px;align-items:center">Mode <select data-act="mode"><option value="mixte"' + (ses.mode !== 'validation' ? ' selected' : '') + '>mixte</option><option value="validation"' + (ses.mode === 'validation' ? ' selected' : '') + '>valider chaque copie</option></select></label></div>';
+  h += '<div class="qlist">' + studs.map(s => {
+    const k = D.studentStatus(app.state, ses, s.id), r = app.state.results[D.resultId(ses.id, s.id)];
+    const sc = r && ev ? D.scoreResult(Q, ev, r) : null;
+    const note = sc ? '<b class="mono">' + fmt(sc.note) + ' / ' + fmt(sc.scale) + '</b>' : '';
+    const acts = r ? '<button class="btn small" type="button" data-open="' + s.id + '">Voir</button>'
+      : '<button class="btn small" type="button" data-absent="' + s.id + '">' + (k === 'absent' ? 'Présent' : 'Absent') + '</button><button class="btn small" type="button" data-manual="' + s.id + '">Saisir à la main</button>';
+    return '<div class="q" style="grid-template-columns:1fr auto;align-items:center"><div class="body" style="gap:4px"><div class="line"><b>' + eh(s.nom + ' ' + D.displayFirst(s)) + '</b>' + pill(k) + note + (s.classe !== ses.classe ? '<span class="small muted">(maintenant en ' + eh(s.classe) + ')</span>' : '') + '</div></div><div class="actions">' + acts + '</div></div>';
+  }).join('') + '</div>';
+  h += '<div class="actions">' + (ses.closed ? '<button class="btn" type="button" data-act="reopen">Rouvrir la séance</button>'
+    : '<button class="btn" type="button" data-act="close">' + (cor.closeArmed ? 'Confirmer : supprimer les photos et clore' : 'Clore la séance') + '</button>') + '</div>' +
+    '<p class="small muted">Clore la séance supprime les photos des copies ; les réponses et les notes restent. Sans action de votre part, elle se clôt ' + D.settings(app.state).retentionDays + ' jours après la dernière correction.</p>';
+  $('cor-session').innerHTML = h;
+}
+$('cor-session').addEventListener('change', e => {
+  const ses = app.state.sessions[cor.sessionId]; if (e.target.dataset.act === 'mode' && ses) { ses.mode = e.target.value; ses.updated = new Date().toISOString(); persistSoon(); renderCorrection(); }
+});
+$('cor-session').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const ses = app.state.sessions[cor.sessionId]; if (!ses) return;
+  const act = b.dataset.act;
+  if (act === 'back') { cor.view = 'list'; renderCorrection(); return; }
+  if (act === 'review') { cor.queue = sessionStudents(ses).filter(s => D.studentStatus(app.state, ses, s.id) === 'check').map(s => s.id); return openCopy(cor.queue[0]); }
+  if (act === 'close') {
+    if (!cor.closeArmed) { cor.closeArmed = true; renderSession(); setTimeout(() => { cor.closeArmed = false; if (cor.view === 'session') renderSession(); }, 4000); return; }
+    cor.closeArmed = false; await D.closeSession(app.state, ses); await persist(); renderCorrection(); return;
+  }
+  if (act === 'reopen') { ses.closed = null; ses.updated = new Date().toISOString(); await persist(); renderCorrection(); return; }
+  if (b.dataset.open) return openCopy(b.dataset.open);
+  if (b.dataset.absent) { ses.absent = ses.absent || {}; if (ses.absent[b.dataset.absent]) delete ses.absent[b.dataset.absent]; else ses.absent[b.dataset.absent] = true; ses.updated = new Date().toISOString(); persistSoon(); renderSession(); return; }
+  if (b.dataset.manual) {
+    const ev = sesEval(ses), sid = b.dataset.manual, labs = D.readyLabels(ev);
+    if (!labs.length) { msg('cor-progress', 'bad', 'Photographiez d\'abord le corrigé de cette évaluation.'); return; }
+    const version = ev.assign && ev.assign[sid] && ev.versions[ev.assign[sid]] && ev.versions[ev.assign[sid]].tpl ? ev.assign[sid] : labs[0];
+    const now = new Date().toISOString(), rid = D.resultId(ses.id, sid);
+    const r = app.state.results[rid] = { id: rid, sessionId: ses.id, evalId: ev.id, studentId: sid, version, created: now, updated: now, source: 'saisie à la main', manualEntry: true, boxes: {}, manual: {}, log: [], problems: [], validated: null, hasImg: false };
+    const sc = D.scoreResult(Q, ev, r); Object.assign(r, { note: sc.note, scale: sc.scale, score: sc.score, total: sc.total });
+    if (ses.absent) delete ses.absent[sid];
+    await persist(); return openCopy(sid);
+  }
+});
 
-function renderCopy() {
-  const c = st.copy; if (!c) return;
-  rescore();
-  const tpl = c.tpl, res = c.res, labels = labelsOf(tpl), ev = c.ev;
-  $('copy-zone').hidden = false;
-  const note = D.finalGrade(res.score, res.total, ev.scale, ev.rounding);
-  c.entry.note = note; c.entry.scale = ev.scale;
-  $('copy-score').textContent = fmt(note) + ' / ' + fmt(ev.scale);
-  $('copy-sub').innerHTML = 'score ' + fmt(res.score) + ' / ' + fmt(res.total) + ' points · arrondi ' + ROUND_LABEL[ev.rounding] + ' · ' + escapeHtml(ev.name) + (D.versionLabels(ev).length > 1 ? ' (version ' + c.entry.version + ')' : '') + ' · ' + escapeHtml(c.name) + ' · ' + c.entry.ms + ' ms' + (res.rotated ? ' · photo retournée' : '');
-  const doubts = res.questions.filter(q => q.status === 'doute');
-  const multi = res.questions.filter(q => q.status === 'multiple');
-  let iss = '';
-  if (doubts.length) iss += '<div class="note doubt"><b>À vérifier :</b> ' + doubts.map(q => 'question ' + q.id).join(', ') + '. Touchez la case orange pour trancher.</div>';
-  if (multi.length) iss += '<div class="note doubt"><b>Plusieurs cases cochées</b> pour une réponse unique : ' + multi.map(q => 'question ' + q.id).join(', ') + ' (0 point).</div>';
-  if (!doubts.length && !multi.length) iss = '<div class="note ok">Lecture sans incertitude.' + (c.entry.manual ? ' ' + c.entry.manual + ' case(s) corrigée(s) à la main.' : '') + '</div>';
-  $('copy-issues').innerHTML = iss;
-
-  const cnv = $('cv-copy'); cnv.width = c.canvas.width; cnv.height = c.canvas.height;
-  const ctx = cnv.getContext('2d'); ctx.drawImage(c.canvas, 0, 0);
-  const showFill = $('show-fill').checked;
-  const correct = new Set(tpl.questions.flatMap(q => q.correct));
-  for (const b of tpl.boxes) {
-    const r = res.boxes[b.id]; if (!r) continue;
-    const eff = r.manual || r.state, o = { dx: r.dx, dy: r.dy };
+// ---- une copie ----
+async function openCopy(sid) {
+  cor.view = 'copy'; cor.studentId = sid; cor.delArmed = null; cor.img = null;
+  const ses = app.state.sessions[cor.sessionId], r = ses && app.state.results[D.resultId(ses.id, sid)];
+  if (r && r.hasImg) { const u = await D.getImage(r.id); if (u) cor.img = await fileToCanvas(u); }
+  renderCorrection(); window.scrollTo({ top: 0 });
+}
+function curResult() { const ses = app.state.sessions[cor.sessionId]; return ses && app.state.results[D.resultId(ses.id, cor.studentId)]; }
+function renderCopyView() {
+  const ses = app.state.sessions[cor.sessionId], r = curResult(), ev = ses && sesEval(ses), stu = app.state.students[cor.studentId];
+  if (!r || !ev) { cor.view = 'session'; return renderCorrection(); }
+  const withRes = sessionStudents(ses).filter(s => app.state.results[D.resultId(ses.id, s.id)]).map(s => s.id);
+  const i = withRes.indexOf(cor.studentId);
+  const inQueue = cor.queue && cor.queue.includes(cor.studentId);
+  $('copy-nav').innerHTML = '<button class="btn small" type="button" data-nav="back">← Séance</button>' +
+    '<button class="btn small" type="button" data-nav="prev"' + (i > 0 ? '' : ' disabled') + '>‹ Précédente</button>' +
+    '<button class="btn small" type="button" data-nav="next"' + (i >= 0 && i < withRes.length - 1 ? '' : ' disabled') + '>Suivante ›</button>' +
+    (inQueue ? '<span class="small muted" style="align-self:center">Copie à vérifier ' + (cor.queue.indexOf(cor.studentId) + 1) + ' sur ' + cor.queue.length + '</span>' : '');
+  $('copy-who').textContent = stu ? stu.nom + ' ' + D.displayFirst(stu) : 'Élève inconnu';
+  const k = D.studentStatus(app.state, ses, cor.studentId);
+  $('copy-meta').innerHTML = eh(ses.classe) + ' · ' + eh(ev.name) + (D.readyLabels(ev).length > 1 ? ' · version ' + r.version : '') + ' · ' + pill(k) + (r.source ? ' · ' + eh(r.source) : '') + (r.validated ? ' · validée le ' + fmtDay(r.validated) : '');
+  let acts = '';
+  if (r.rescan) {
+    $('copy-score').textContent = ''; $('copy-sub').textContent = '';
+    $('copy-issues').innerHTML = '<div class="note bad"><b>Copie à rescanner.</b> ' + eh(markerHelp(r.error || '', 0).replace(/<[^>]+>/g, '')) + ' Reprenez la photo, ou saisissez les réponses à la main.</div>';
+    $('copy-fig').hidden = !cor.img; $('copy-grid').innerHTML = ''; $('copy-table').innerHTML = '';
+    if (cor.img) { const cnv = $('cv-copy'); cnv.width = cor.img.width; cnv.height = cor.img.height; cnv.getContext('2d').drawImage(cor.img, 0, 0); }
+    acts = '<button class="btn" type="button" data-cact="tomanual">Saisir à la main</button>';
+  } else {
+    const sc = D.scoreResult(Q, ev, r);
+    if (r.note !== sc.note) Object.assign(r, { note: sc.note, scale: sc.scale, score: sc.score, total: sc.total });
+    $('copy-score').textContent = fmt(sc.note) + ' / ' + fmt(sc.scale);
+    $('copy-sub').innerHTML = ev.scale ? 'score ' + fmt(sc.score) + ' / ' + fmt(sc.total) + ' points · arrondi ' + ROUND_LABEL[ev.rounding] : 'note sur le total des points du barème';
+    const probs = (r.problems || []).map(eh);
+    $('copy-issues').innerHTML = probs.length ? '<div class="note ' + (r.validated ? '' : 'doubt') + '"><b>' + (r.validated ? 'Signalé à la lecture (validé depuis)' : 'À vérifier') + ' :</b> ' + probs.join(' ') + (r.validated ? '' : ' Touchez une case pour la corriger, puis validez.') + '</div>' : (r.manualEntry ? '<div class="note">Saisie à la main : touchez les réponses de l\'élève.</div>' : '');
+    const showImg = !!cor.img && !r.manualEntry;
+    $('copy-fig').hidden = !showImg;
+    if (showImg) drawCopy(sc, ev); else $('copy-grid').innerHTML = gridHtml(sc);
+    if (showImg) $('copy-grid').innerHTML = '';
+    const labels = labelsOf(sc.tpl), L = id => labels[id];
+    $('copy-table').innerHTML = sc.questions.map(q => {
+      const tq = sc.tpl.questions.find(x => x.id === q.id);
+      const pl = q.status === 'doute' ? '<span class="pill doubt">à vérifier</span>' : q.status === 'multiple' ? '<span class="pill bad">plusieurs cases</span>' : q.status === 'vide' ? '<span class="pill">sans réponse</span>' : q.points >= q.max ? '<span class="pill ok">juste</span>' : q.points > 0 ? '<span class="pill doubt">partiel</span>' : '<span class="pill bad">faux</span>';
+      return '<tr><td>' + q.id + ' <span class="muted small">' + (q.type === 'single' ? 'unique' : 'multiple') + '</span></td><td class="mono">' + (q.marked.map(L).join(' ') || '—') + (q.doubt.length ? ' <span style="color:var(--doubt)">?' + q.doubt.map(L).join(' ') + '</span>' : '') + '</td><td class="mono">' + (tq.correct.map(L).join(' ') || '—') + '</td><td>' + pl + '</td><td class="num">' + fmt(q.points) + ' / ' + fmt(q.max) + '</td></tr>';
+    }).join('');
+    if (k === 'check') acts += '<button class="btn primary" type="button" data-cact="validate">' + (inQueue ? 'Valider et passer à la suivante' : 'Valider la copie') + '</button>';
+    if (r.manualEntry && D.readyLabels(ev).length > 1) acts += '<label class="small" style="display:flex;gap:6px;align-items:center">Version <select data-cact="version">' + D.readyLabels(ev).map(l => '<option' + (l === r.version ? ' selected' : '') + '>' + l + '</option>').join('') + '</select></label>';
+  }
+  acts += '<button class="btn" type="button" data-cact="delete">' + (cor.delArmed ? 'Confirmer la suppression' : 'Supprimer cette copie') + '</button>';
+  $('copy-actions').innerHTML = acts;
+}
+function gridHtml(sc) {
+  const labels = labelsOf(sc.tpl);
+  return '<div class="qlist">' + sc.tpl.questions.map(q => '<div class="q"><div class="num">' + q.id + '</div><div class="body"><div class="seg">' + q.boxes.map(id => {
+    const b = sc.boxes[id], eff = b.manual || b.state;
+    return '<button type="button" data-gbox="' + id + '" aria-pressed="' + (eff === 'coche') + '"' + (eff === 'doute' ? ' style="border-color:var(--doubt)"' : '') + '>' + labels[id] + '</button>';
+  }).join('') + '</div></div></div>').join('') + '</div>';
+}
+function drawCopy(sc, ev) {
+  const cnv = $('cv-copy'); cnv.width = cor.img.width; cnv.height = cor.img.height;
+  const ctx = cnv.getContext('2d'); ctx.drawImage(cor.img, 0, 0);
+  // l'image enregistrée est réduite : on ramène les coordonnées du modèle à sa taille
+  const S = Q.canonSize(sc.tpl.geo), k = cor.img.width / S.w;
+  ctx.save(); ctx.scale(k, k);
+  const labels = labelsOf(sc.tpl), showFill = $('show-fill').checked;
+  const correct = new Set(sc.tpl.questions.flatMap(q => q.correct));
+  for (const b of sc.tpl.boxes) {
+    const r = sc.boxes[b.id], eff = r.manual || r.state, o = { dx: r.dx || 0, dy: r.dy || 0 };
     if (eff === 'coche') drawBox(ctx, b, correct.has(b.id) ? '#17803d' : '#c62828', Object.assign({ width: 5, fill: correct.has(b.id) ? 'rgba(23,128,61,0.15)' : 'rgba(198,40,40,0.15)' }, o));
     else if (eff === 'doute') drawBox(ctx, b, '#b86a00', Object.assign({ width: 5, fill: 'rgba(184,106,0,0.2)' }, o));
     else if (correct.has(b.id)) drawBox(ctx, b, '#17803d', Object.assign({ width: 3, dash: true }, o));
-    if (r.manual) drawLabel(ctx, b, '✎ ' + labels[b.id], '#18223a', r.dx, r.dy);
-    else if (showFill) drawLabel(ctx, b, Math.round(r.fill * 100) + '%', eff === 'coche' ? '#18223a' : eff === 'doute' ? '#b86a00' : '#57617a', r.dx, r.dy);
-    else if (eff !== 'vide') drawLabel(ctx, b, labels[b.id], eff === 'doute' ? '#b86a00' : '#18223a', r.dx, r.dy);
+    if (r.manual) drawLabel(ctx, b, '✎ ' + labels[b.id], '#18223a', o.dx, o.dy);
+    else if (showFill) drawLabel(ctx, b, Math.round((r.fill || 0) * 100) + '%', eff === 'coche' ? '#18223a' : eff === 'doute' ? '#b86a00' : '#57617a', o.dx, o.dy);
+    else if (eff !== 'vide') drawLabel(ctx, b, labels[b.id], eff === 'doute' ? '#b86a00' : '#18223a', o.dx, o.dy);
   }
-  const L = id => labels[id];
-  $('copy-table').innerHTML = res.questions.map(q => {
-    const tq = tpl.questions.find(x => x.id === q.id);
-    const pill = q.status === 'doute' ? '<span class="pill doubt">à vérifier</span>' : q.status === 'multiple' ? '<span class="pill bad">plusieurs cases</span>' : q.status === 'vide' ? '<span class="pill">sans réponse</span>' : q.points >= q.max ? '<span class="pill ok">juste</span>' : q.points > 0 ? '<span class="pill doubt">partiel</span>' : '<span class="pill bad">faux</span>';
-    return '<tr><td>' + q.id + ' <span class="muted small">' + (q.type === 'single' ? 'unique' : 'multiple') + '</span></td><td class="mono">' + (q.marked.map(L).join(' ') || '—') + (q.doubt.length ? ' <span style="color:var(--doubt)">?' + q.doubt.map(L).join(' ') + '</span>' : '') + '</td><td class="mono">' + (tq.correct.map(L).join(' ') || '—') + '</td><td>' + pill + '</td><td class="num">' + fmt(q.points) + ' / ' + fmt(q.max) + '</td></tr>';
-  }).join('');
+  ctx.restore();
 }
-
-$('cv-copy').addEventListener('click', ev => {
-  const c = st.copy; if (!c) return;
-  const p = canvasPoint($('cv-copy'), ev);
-  const b = hitBox(c.tpl.boxes, p, b => c.res.boxes[b.id] || { dx: 0, dy: 0 }); if (!b) return;
-  const r = c.res.boxes[b.id];
-  // cycle : automatique → cochée → vide → automatique
-  r.manual = !r.manual ? 'coche' : r.manual === 'coche' ? 'vide' : undefined;
-  if (!r.manual) delete r.manual;
-  renderCopy();
+function toggleBox(id, cycle) {
+  const r = curResult(); if (!r) return;
+  const before = r.manual[id] || null, read = (r.boxes[id] || {}).state || 'vide';
+  let next;
+  if (cycle) next = !before ? 'coche' : before === 'coche' ? 'vide' : null;   // photo : auto → cochée → vide → auto
+  else next = (before || read) === 'coche' ? 'vide' : 'coche';               // grille : bascule
+  if (next && !r.manualEntry && next === read) next = null;
+  if (next) r.manual[id] = next; else delete r.manual[id];
+  r.log.push({ date: new Date().toISOString(), box: +id, lu: read, avant: before, apres: next });
+  r.updated = new Date().toISOString(); app.state.sessions[r.sessionId].updated = r.updated;
+  persistSoon(); renderCopyView();
+}
+$('cv-copy').addEventListener('click', e => {
+  const r = curResult(); if (!r || !cor.img) return;
+  const ses = app.state.sessions[cor.sessionId], sc = D.scoreResult(Q, sesEval(ses), r); if (!sc) return;
+  const p = canvasPoint($('cv-copy'), e), k = cor.img.width / Q.canonSize(sc.tpl.geo).w;
+  const b = hitBox(sc.tpl.boxes, { x: p.x / k, y: p.y / k }, b => ({ dx: sc.boxes[b.id].dx || 0, dy: sc.boxes[b.id].dy || 0 }));
+  if (b) toggleBox(b.id, true);
 });
-$('show-fill').addEventListener('change', renderCopy);
-$('in-copy-cam').addEventListener('change', e => { const fs = [...e.target.files]; e.target.value = ''; readCopies(fs.map(f => ({ src: f, name: f.name || 'photo' }))); });
-$('in-copy-file').addEventListener('change', e => { const fs = [...e.target.files]; e.target.value = ''; readCopies(fs.map(f => ({ src: f, name: f.name || 'image' }))); });
-for (const b of document.querySelectorAll('[data-sample]')) b.addEventListener('click', () => readCopies([{ src: SAMPLES[b.dataset.sample], name: 'exemple ' + b.textContent }]));
-function renderCopyEval() {
-  const ev = curEval();
-  $('copy-samples').hidden = !(ev && ev.sample);
-  if (!ev) { $('copy-ev').innerHTML = '<div class="note">Aucune évaluation choisie. Ouvrez l\'onglet <b>Évaluations</b>.</div>'; return; }
-  const labs = D.readyLabels(ev);
-  if (!labs.includes(st.copyVersion)) st.copyVersion = labs[0];
-  if (!labs.length) { $('copy-ev').innerHTML = '<div class="note doubt">Évaluation <b>' + escapeHtml(ev.name) + '</b> : photographiez d\'abord son corrigé dans l\'onglet Évaluations.</div>'; return; }
-  $('copy-ev').innerHTML = '<div class="note" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center"><span>Évaluation : <b>' + escapeHtml(ev.name) + '</b></span>' +
-    (labs.length > 1 ? '<span class="seg" id="copy-ver">' + labs.map(l => '<button type="button" data-ver="' + l + '" aria-pressed="' + (l === st.copyVersion) + '">Version ' + l + '</button>').join('') + '</span>' : '') + '</div>';
-}
-$('copy-ev').addEventListener('click', e => { const b = e.target.closest('[data-ver]'); if (b) { st.copyVersion = b.dataset.ver; renderCopyEval(); } });
+$('copy-grid').addEventListener('click', e => { const b = e.target.closest('[data-gbox]'); if (b) toggleBox(b.dataset.gbox, false); });
+$('show-fill').addEventListener('change', renderCopyView);
+$('copy-nav').addEventListener('click', e => {
+  const b = e.target.closest('[data-nav]'); if (!b) return;
+  const ses = app.state.sessions[cor.sessionId];
+  if (b.dataset.nav === 'back') { cor.view = 'session'; cor.queue = null; renderCorrection(); return; }
+  const withRes = sessionStudents(ses).filter(s => app.state.results[D.resultId(ses.id, s.id)]).map(s => s.id);
+  const i = withRes.indexOf(cor.studentId) + (b.dataset.nav === 'next' ? 1 : -1);
+  if (withRes[i]) openCopy(withRes[i]);
+});
+$('copy-actions').addEventListener('change', e => {
+  const r = curResult(); if (r && e.target.dataset.cact === 'version') { r.version = e.target.value; r.manual = {}; r.updated = new Date().toISOString(); persistSoon(); renderCopyView(); }
+});
+$('copy-actions').addEventListener('click', async e => {
+  const b = e.target.closest('[data-cact]'); if (!b || b.tagName === 'SELECT') return;
+  const r = curResult(); if (!r) return;
+  const act = b.dataset.cact;
+  if (act === 'validate') {
+    r.validated = new Date().toISOString(); r.updated = r.validated; await persist();
+    if (cor.queue) {
+      const nxt = cor.queue[cor.queue.indexOf(cor.studentId) + 1];
+      if (nxt) return openCopy(nxt);
+      cor.queue = null; cor.view = 'session'; renderCorrection(); msg('cor-progress', 'ok', '<b>Toutes les copies à vérifier sont traitées.</b>'); return;
+    }
+    renderCopyView(); return;
+  }
+  if (act === 'tomanual') { Object.assign(r, { rescan: false, error: null, manualEntry: true, boxes: {}, manual: {} }); r.updated = new Date().toISOString(); await persist(); renderCopyView(); return; }
+  if (act === 'delete') {
+    if (!cor.delArmed) { cor.delArmed = true; renderCopyView(); setTimeout(() => { cor.delArmed = null; if (cor.view === 'copy') renderCopyView(); }, 4000); return; }
+    if (r.hasImg) await D.delImage(r.id);
+    delete app.state.results[r.id]; await persist();
+    if (cor.queue) cor.queue = cor.queue.filter(x => x !== cor.studentId);
+    cor.view = 'session'; renderCorrection();
+  }
+});
 
-// ---------------- BILAN ----------------
-function renderCount() { $('bilan-count').textContent = st.log.length; }
-function renderLog() {
-  const ok = st.log.filter(e => !e.error);
-  const nBoxes = ok.reduce((s, e) => s + Object.keys(e.boxes).length, 0);
-  const nManual = ok.reduce((s, e) => s + (e.manual || 0), 0);
-  const nDoubt = ok.reduce((s, e) => s + (e.doubts || 0), 0);
-  const nFail = st.log.length - ok.length;
-  const avg = ok.length ? Math.round(ok.reduce((s, e) => s + e.ms, 0) / ok.length) : 0;
-  const pct = n => nBoxes ? (n / nBoxes * 100).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + ' %' : '—';
-  $('stats').innerHTML = [
-    [ok.length + (nFail ? ' + ' + nFail : ''), 'copies lues' + (nFail ? ' + à rescanner' : '')],
-    [nBoxes, 'cases lues'],
-    [pct(nManual), 'cases corrigées à la main (' + nManual + ')'],
-    [pct(nDoubt), 'cases incertaines (' + nDoubt + ')'],
-    [avg ? avg + ' ms' : '—', 'durée moyenne par copie']
-  ].map(([v, l]) => '<div class="stat"><div class="v">' + v + '</div><div class="l">' + l + '</div></div>').join('');
-  $('log-table').innerHTML = st.log.length ? st.log.map((e, i) => e.error
-    ? '<tr><td class="num">' + (i + 1) + '</td><td>' + escapeHtml(e.name) + '</td><td colspan="3"><span class="pill bad">à rescanner</span></td><td class="num">' + e.ms + ' ms</td></tr>'
-    : '<tr><td class="num">' + (i + 1) + '</td><td><button class="btn small" type="button" data-open="' + i + '">Ouvrir</button> ' + escapeHtml(e.name) + '</td><td class="num">' + (e.note != null ? fmt(e.note) + ' / ' + fmt(e.scale) : fmt(e.score) + ' / ' + fmt(e.total)) + '</td><td class="num">' + (e.doubts || 0) + '</td><td class="num">' + (e.manual || 0) + '</td><td class="num">' + e.ms + ' ms</td></tr>').join('')
-    : '<tr><td colspan="6" class="muted">Aucune copie lue pour l\'instant. Ouvrez l\'onglet Copies et essayez un exemple ou une photo.</td></tr>';
-  $('log-json').value = JSON.stringify({ outil: 'banc-essai-qcm', date: new Date().toISOString(), appareil: navigator.userAgent, seuils: Q.TH, modele: st.tpl && { evaluation: curEval() && curEval().name, geo: st.tpl.geo, cases: st.tpl.boxes.map(b => ({ id: b.id, forme: b.shape, refFill: b.refFill })), questions: st.tpl.questions }, copies: st.log }, (k, v) => k === '_copy' ? undefined : v, 1);
+// ---- copies sans QR code : attribution à la main ----
+async function renderInbox() {
+  const items = Object.values(app.state.inbox || {}).sort((a, b) => a.created.localeCompare(b.created));
+  if (!items.length || cor.view === 'copy') { $('cor-inbox').innerHTML = ''; return; }
+  const evs = D.listEvaluations(app.state).filter(e => D.readyLabels(e).length);
+  const ses = cor.view === 'session' && app.state.sessions[cor.sessionId];
+  let h = '<div class="note doubt" style="display:flex;flex-direction:column;gap:10px"><b>' + plural(items.length, 'copie à attribuer', 'copies à attribuer') + ' à la main</b>';
+  for (const it of items) {
+    const open = cor.attach === it.id;
+    h += '<div style="display:grid;grid-template-columns:64px 1fr;gap:10px;border-top:1px solid var(--rule);padding-top:8px"><img data-inimg="' + it.id + '" alt="" style="width:64px;border-radius:4px;border:1px solid var(--rule);background:var(--sheet)">' +
+      '<div style="display:flex;flex-direction:column;gap:6px;min-width:0"><span class="small"><b>' + eh(it.name) + '</b><br>' + eh(it.reason) + '</span>';
+    if (open) {
+      const evId = it.evalId || (ses && ses.evalId) || (evs[0] && evs[0].id), ev = app.state.evaluations[evId];
+      const classes = D.classesOf(app.state).filter(c => c.classe);
+      h += '<label class="small">Évaluation <select data-inev="' + it.id + '">' + evs.map(e => '<option value="' + e.id + '"' + (e.id === evId ? ' selected' : '') + '>' + eh(e.name) + '</option>').join('') + '</select></label>' +
+        '<label class="small">Élève <select data-instu="' + it.id + '">' + classes.map(c => '<optgroup label="' + eh(c.classe) + '">' + c.students.map(s => '<option value="' + s.id + '"' + (s.id === it.studentId ? ' selected' : '') + (ses && c.classe === ses.classe ? '' : '') + '>' + eh(s.nom + ' ' + D.displayFirst(s)) + '</option>').join('') + '</optgroup>').join('') + '</select></label>' +
+        (ev && D.readyLabels(ev).length > 1 ? '<label class="small">Version <select data-inver="' + it.id + '">' + D.readyLabels(ev).map(l => '<option' + (l === it.version ? ' selected' : '') + '>' + l + '</option>').join('') + '</select></label>' : '') +
+        '<div class="actions"><button class="btn small primary" type="button" data-inread="' + it.id + '">Lire la copie</button><button class="btn small" type="button" data-incancel="1">Annuler</button></div>';
+    } else h += '<div class="actions"><button class="btn small" type="button" data-inattach="' + it.id + '"' + (evs.length ? '' : ' disabled') + '>Attribuer à un élève</button><button class="btn small" type="button" data-indel="' + it.id + '">Supprimer</button></div>';
+    h += '</div></div>';
+  }
+  $('cor-inbox').innerHTML = h + '</div>';
+  // sélection par défaut : premier élève de la classe de la séance ouverte sans copie
+  for (const sel of document.querySelectorAll('[data-instu]')) {
+    const it = app.state.inbox[sel.dataset.instu];
+    if (!it.studentId && ses) { const s0 = sessionStudents(ses).find(s => D.studentStatus(app.state, ses, s.id) === 'todo'); if (s0) sel.value = s0.id; }
+  }
+  for (const im of document.querySelectorAll('[data-inimg]')) D.getImage('inbox:' + im.dataset.inimg).then(u => { if (u) im.src = u; });
 }
+$('cor-inbox').addEventListener('change', e => {
+  const t = e.target, it = app.state.inbox && app.state.inbox[t.dataset.inev || t.dataset.instu || t.dataset.inver]; if (!it) return;
+  if (t.dataset.inev) { it.evalId = t.value; renderInbox(); }
+  if (t.dataset.instu) it.studentId = t.value;
+  if (t.dataset.inver) it.version = t.value;
+});
+$('cor-inbox').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.inattach) { cor.attach = b.dataset.inattach; renderInbox(); return; }
+  if (b.dataset.incancel) { cor.attach = null; renderInbox(); return; }
+  if (b.dataset.indel) { await D.delImage('inbox:' + b.dataset.indel); delete app.state.inbox[b.dataset.indel]; await persist(); renderCorrection(); return; }
+  if (b.dataset.inread) {
+    const id = b.dataset.inread, it = app.state.inbox[id];
+    const evSel = document.querySelector('[data-inev="' + id + '"]'), stuSel = document.querySelector('[data-instu="' + id + '"]'), verSel = document.querySelector('[data-inver="' + id + '"]');
+    const ev = app.state.evaluations[evSel.value], stu = app.state.students[stuSel.value];
+    const version = verSel ? verSel.value : (ev.assign && ev.assign[stu.id] && ev.versions[ev.assign[stu.id]] && ev.versions[ev.assign[stu.id]].tpl ? ev.assign[stu.id] : D.readyLabels(ev)[0]);
+    busy('cor-progress', 'Lecture de la copie…'); await tick();
+    const u = await D.getImage('inbox:' + id), canvas = await fileToCanvas(u);
+    const out = await processCanvas(canvas, it.name, { ev, stu, version });
+    if (out.inbox) { await D.delImage('inbox:' + id); delete app.state.inbox[id]; cor.attach = null; await persist(); msg('cor-progress', 'bad', '<b>La copie n\'a pas pu être lue</b> avec cette évaluation : elle reste dans les copies à attribuer.'); renderCorrection(); return; }
+    await D.delImage('inbox:' + id); delete app.state.inbox[id]; cor.attach = null; await persist();
+    $('cor-progress').innerHTML = '';
+    cor.sessionId = out.ses.id; openCopy(stu.id);
+  }
+});
+
+// ---------------- RÉGLAGES ----------------
+function renderSettings() {
+  const S = D.settings(app.state);
+  $('set-retention').value = S.retentionDays; $('set-mode').value = S.defaultMode;
+  $('set-measure-ses').innerHTML = listSessions().map(x => '<option value="' + x.id + '">' + eh(sesTitle(x)) + ' (' + fmtDay(x.created) + ')</option>').join('') || '<option value="">Aucune séance</option>';
+}
+$('set-retention').addEventListener('change', e => { app.state.settings = Object.assign(D.settings(app.state), { retentionDays: Math.min(365, Math.max(1, Math.round(+e.target.value || 30))) }); persistSoon(); renderSettings(); });
+$('set-mode').addEventListener('change', e => { app.state.settings = Object.assign(D.settings(app.state), { defaultMode: e.target.value }); persistSoon(); });
 $('btn-copy-log').addEventListener('click', () => {
-  renderLog();
-  const txt = $('log-json').value;
+  const ses = app.state.sessions[$('set-measure-ses').value]; if (!ses) return;
+  const ev = sesEval(ses), rs = D.sessionResults(app.state, ses.id);
+  const data = { outil: 'correcteur-qcm', date: new Date().toISOString(), appareil: navigator.userAgent, seuils: Q.TH, evaluation: ev && ev.name, mode: ses.mode,
+    versions: ev && Object.fromEntries(D.readyLabels(ev).map(l => [l, { geo: ev.versions[l].tpl.geo, cases: ev.versions[l].tpl.boxes.map(b => ({ id: b.id, forme: b.shape, refFill: b.refFill })), questions: ev.versions[l].tpl.questions }])),
+    copies: rs.map((r, i) => ({ n: i + 1, version: r.version, ms: r.ms, rescan: !!r.rescan, erreur: r.error, saisieManuelle: !!r.manualEntry, rotated: !!r.rotated, boxes: r.boxes, corrections: r.log, problemes: r.problems, valide: !!r.validated, note: r.note, sur: r.scale })) };
+  const txt = JSON.stringify(data, null, 1); $('log-json').value = txt;
   const done = () => msg('log-msg', 'ok', 'Mesures copiées. Collez-les dans notre conversation.');
-  const fallback = () => { const d = document.querySelector('details'); d.open = true; $('log-json').focus(); $('log-json').select(); msg('log-msg', '', 'Copie automatique refusée par le navigateur : le texte est sélectionné ci-dessous, copiez-le à la main.'); };
+  const fallback = () => { $('log-json').focus(); $('log-json').select(); msg('log-msg', '', 'Copie automatique refusée : le texte est sélectionné ci-dessous, copiez-le à la main.'); };
   try { navigator.clipboard.writeText(txt).then(done, fallback); } catch (e) { fallback(); }
-});
-$('log-table').addEventListener('click', async ev => {
-  const b = ev.target.closest('button[data-open]'); if (!b) return;
-  const e = st.log[+b.dataset.open]; if (!e || !e._copy) return;
-  const c = e._copy;
-  st.copy = { res: c.res, canvas: await fileToCanvas(c.img), name: c.name, entry: e, tpl: c.tpl, ev: c.ev };
-  $('copy-status').innerHTML = '';
-  show('copies'); renderCopy();
-});
-let clearArmed = false;
-$('btn-clear-log').addEventListener('click', () => {
-  if (!clearArmed) { clearArmed = true; $('btn-clear-log').textContent = 'Confirmer l\'effacement'; setTimeout(() => { clearArmed = false; $('btn-clear-log').textContent = 'Effacer le bilan'; }, 4000); return; }
-  clearArmed = false; $('btn-clear-log').textContent = 'Effacer le bilan';
-  st.log = []; renderCount(); renderLog(); msg('log-msg', '', '');
 });
 
 // ---------------- COPIES À IMPRIMER ----------------
 const P = window.QCMPrint;
 function blobToDataURL(b) { return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(b); }); }
 function dataURLToBytes(u) { const b = atob(u.split(',')[1]); const a = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i); return a; }
-const pr = { evId: null, analysis: null, busy: false, classe: '', unchecked: new Set(), result: null };
+const pr = { evId: null, analysis: null, busy: false, classes: new Set(), unchecked: new Set(), result: null };
 
 async function analyzeSubject(ev) {
   pr.evId = ev.id; pr.analysis = null; pr.result = null;
@@ -1898,7 +2269,8 @@ function renderPrint() {
   if (!ev) { z.innerHTML = ''; return; }
   if (pr.evId !== ev.id) { pr.evId = ev.id; pr.analysis = null; pr.result = null; pr.error = null; if (ev.subject) setTimeout(() => analyzeSubject(ev), 0); }
   const cls = D.classesOf(app.state).filter(c => c.classe);
-  if (!pr.classe || !cls.some(c => c.classe === pr.classe)) pr.classe = cls.length ? cls[0].classe : '';
+  for (const k of [...pr.classes]) if (!cls.some(c => c.classe === k)) pr.classes.delete(k);
+  if (!pr.classes.size && cls.length) pr.classes.add(cls[0].classe);
   let h = '<details id="print-det"' + (st.printOpen ? ' open' : '') + '><summary><b>Copies à imprimer</b> <span class="muted small">· PDF avec QR code et nom pour chaque élève</span></summary><div style="display:flex;flex-direction:column;gap:12px;margin-top:10px">';
   // 1. sujet
   h += '<div style="display:flex;flex-direction:column;gap:6px"><span class="small"><b>1. Le sujet</b> : PDF exporté de Writer, une page par version, avec les quatre repères et le bandeau vide.</span>';
@@ -1918,19 +2290,24 @@ function renderPrint() {
     const missing = Object.keys(pageOf).filter(l => !ev.versions[l] || !ev.versions[l].tpl);
     if (missing.length) h += '<p class="small muted">Corrigé à photographier ensuite pour : version ' + missing.join(', ') + '. Ce n\'est pas nécessaire pour imprimer.</p>';
   }
-  // 2. classe
-  h += '<div style="display:flex;flex-direction:column;gap:6px"><span class="small"><b>2. La classe</b></span>';
+  // 2. classes
+  h += '<div style="display:flex;flex-direction:column;gap:6px"><span class="small"><b>2. Les classes</b> : touchez-en une ou plusieurs.</span>';
   if (!cls.length) h += '<div class="note">Importez d\'abord la liste des élèves (onglet Élèves).</div>';
   else {
-    const c = cls.find(x => x.classe === pr.classe);
     const dupIds = new Set(D.duplicates(app.state).flatMap(g => g.students.map(s => s.id)));
-    h += '<select id="pr-classe">' + cls.map(x => '<option' + (x.classe === pr.classe ? ' selected' : '') + '>' + eh(x.classe) + '</option>').join('') + '</select>';
-    h += '<div class="small" style="columns:2 11em;column-gap:12px">' + c.students.map(s => '<label style="display:flex;gap:6px;align-items:center;break-inside:avoid;padding:2px 0"><input type="checkbox" data-stu="' + s.id + '"' + (pr.unchecked.has(s.id) ? '' : ' checked') + '>' + eh(s.nom + ' ' + D.displayFirst(s)) + (dupIds.has(s.id) ? ' <b style="color:var(--doubt)">doublon</b>' : '') + '</label>').join('') + '</div>';
-    const n = c.students.filter(s => !pr.unchecked.has(s.id)).length;
+    const levels = [...new Set(cls.map(c => c.level))];
+    h += levels.map(lv => '<div class="seg">' + cls.filter(c => c.level === lv).map(c => '<button type="button" data-cls="' + eh(c.classe) + '" aria-pressed="' + pr.classes.has(c.classe) + '">' + eh(c.classe) + '</button>').join('') + '</div>').join('');
+    const sel = cls.filter(c => pr.classes.has(c.classe));
+    let n = 0;
+    for (const c of sel) {
+      const k = c.students.filter(s => !pr.unchecked.has(s.id)).length; n += k;
+      h += '<details' + (sel.length === 1 ? ' open' : '') + '><summary class="small"><b>' + eh(c.classe) + '</b> · ' + k + ' / ' + c.students.length + ' élèves' + (c.students.some(s => dupIds.has(s.id)) ? ' <span class="pill doubt">doublon</span>' : '') + '</summary>' +
+        '<div class="small" style="columns:2 11em;column-gap:12px;margin-top:6px">' + c.students.map(s => '<label style="display:flex;gap:6px;align-items:center;break-inside:avoid;padding:2px 0"><input type="checkbox" data-stu="' + s.id + '"' + (pr.unchecked.has(s.id) ? '' : ' checked') + '>' + eh(s.nom + ' ' + D.displayFirst(s)) + (dupIds.has(s.id) ? ' <b style="color:var(--doubt)">doublon</b>' : '') + '</label>').join('') + '</div></details>';
+    }
     const labs = Object.keys(pageOf).sort();
-    h += '<span class="small muted">' + plural(n, 'copie', 'copies') + (labs.length > 1 ? ', versions ' + labs.join(', ') + ' en alternance dans l\'ordre alphabétique' : '') + '.</span>';
-    if (c.students.some(s => dupIds.has(s.id))) h += '<div class="note doubt small">Cette classe contient un doublon : retirez-le dans l\'onglet Élèves ou décochez-le, sinon il recevra une copie.</div>';
-    h += '<div class="actions"><button class="btn primary" type="button" id="btn-make-pdf"' + (A && labs.length && n && !pr.busy ? '' : ' disabled') + '>Créer le PDF de la classe</button></div>';
+    h += '<span class="small muted">' + plural(n, 'copie', 'copies') + (sel.length > 1 ? ', rangées classe par classe' : '') + (labs.length > 1 ? ', versions ' + labs.join(', ') + ' en alternance dans l\'ordre alphabétique' : '') + '.</span>';
+    if (sel.some(c => c.students.some(s => dupIds.has(s.id) && !pr.unchecked.has(s.id)))) h += '<div class="note doubt small">Un doublon est coché : retirez-le dans l\'onglet Élèves ou décochez-le, sinon il recevra une copie.</div>';
+    h += '<div class="actions"><button class="btn primary" type="button" id="btn-make-pdf"' + (A && labs.length && n && !pr.busy ? '' : ' disabled') + '>Créer le PDF</button></div>';
   }
   h += '</div><div id="pr-result"></div></div></details>';
   z.innerHTML = h;
@@ -1958,17 +2335,17 @@ $('print-zone').addEventListener('change', async e => {
     if (t.value) pageOf[t.value] = +t.dataset.page;
     persistSoon(); pr.result = null; renderPrint(); return;
   }
-  if (t.id === 'pr-classe') { pr.classe = t.value; pr.result = null; renderPrint(); return; }
   if (t.dataset.stu) { if (t.checked) pr.unchecked.delete(t.dataset.stu); else pr.unchecked.add(t.dataset.stu); pr.result = null; renderPrint(); }
 });
 $('print-zone').addEventListener('click', async e => {
   const ev = curEval(), b = e.target.closest('button'); if (!b || !ev) return;
+  if (b.dataset.cls != null) { if (pr.classes.has(b.dataset.cls)) pr.classes.delete(b.dataset.cls); else pr.classes.add(b.dataset.cls); pr.result = null; renderPrint(); return; }
   if (b.id === 'btn-make-pdf') {
-    const c = D.classesOf(app.state).find(x => x.classe === pr.classe); if (!c) return;
+    const sel = D.classesOf(app.state).filter(x => pr.classes.has(x.classe)); if (!sel.length) return;
     const pageOf = ev.subject.pageOf, labs = Object.keys(pageOf).sort();
-    const list = c.students.filter(s => !pr.unchecked.has(s.id));
     ev.assign = ev.assign || {};
-    const jobs = list.map((s, i) => ({ student: s, version: labs[i % labs.length] }));
+    const jobs = sel.flatMap(c => c.students.filter(s => !pr.unchecked.has(s.id)).map((s, i) => ({ student: s, version: labs[i % labs.length] })));
+    const c = { classe: sel.map(x => x.classe).join(' ') };
     b.disabled = true; $('pr-result').innerHTML = '<span class="busy" id="pr-prog">Préparation des copies…</span>';
     try {
       const out = await P.buildClassPdf({ bytes: dataURLToBytes(ev.subject.data), analysis: pr.analysis, pageOf, jobs, ev, classe: c.classe,
@@ -1976,9 +2353,9 @@ $('print-zone').addEventListener('click', async e => {
       // versions sans corrigé : créées vides, à photographier
       for (const l of labs) if (!ev.versions[l]) ev.versions[l] = {};
       for (const j of jobs) ev.assign[j.student.id] = j.version;
-      ev.printed = (ev.printed || []).concat({ date: new Date().toISOString(), classe: c.classe, count: jobs.length });
+      for (const x of sel) ev.printed = (ev.printed || []).concat({ date: new Date().toISOString(), classe: x.classe, count: jobs.filter(j => j.student.classe === x.classe).length });
       ev.updated = new Date().toISOString(); await persist();
-      const name = (ev.name + ' - ' + c.classe).replace(/#/g, '').replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ') + '.pdf';
+      const name = (ev.name + ' - ' + c.classe).replace(/#/g, '').replace(/[^\p{L}\p{N} ()'.,_-]+/gu, '-').replace(/-(\s*-)+/g, '-').replace(/\s+/g, ' ').trim() + '.pdf';
       pr.result = { bytes: out.bytes, sheets: out.sheets, count: jobs.length, name, preview: await P.renderFirstPage(out.bytes, 900) };
       renderEvHead(); renderPrint();
     } catch (err) { $('pr-result').innerHTML = '<div class="note bad"><b>Le PDF n\'a pas pu être créé.</b> ' + eh(err.message || String(err)) + '</div>'; b.disabled = false; }
@@ -2153,6 +2530,12 @@ $('bk-zone').addEventListener('click', async e => {
     ev.versions.A = { tpl: saved.tpl, img: saved.img }; await persist();
   }
   store.del('qcm-banc-modele');
+  // clôture automatique des séances anciennes (photos supprimées, §15)
+  const S = D.settings(app.state), limit = Date.now() - S.retentionDays * 864e5;
+  let closed = 0;
+  for (const x of Object.values(app.state.sessions || {})) if (!x.closed && !x.deleted && new Date(x.updated) < limit) { await D.closeSession(app.state, x); closed++; }
+  if (closed) await persist();
+  renderCorrection();
   const last = app.state.ui && app.state.ui.lastEval;
   const list = D.listEvaluations(app.state);
   await selectEvaluation(last && app.state.evaluations[last] && !app.state.evaluations[last].deleted ? last : list[0] ? list[0].id : null);
