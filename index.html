@@ -1837,7 +1837,7 @@ function hitBox(boxes, p, shift) {
     const d = Math.hypot(b.x + s.dx - p.x, b.y + s.dy - p.y);
     if (d < bd) { bd = d; best = b; }
   }
-  return best && bd < Math.max(best.w, 22) * 1.3 ? best : null;
+  return best && bd < Math.max(best.w, 22) * 1.6 ? best : null;
 }
 
 $('cv-ref').addEventListener('click', ev => {
@@ -2147,8 +2147,9 @@ function renderCopyView() {
     $('copy-issues').innerHTML = probs.length ? '<div class="note ' + (r.validated ? '' : 'doubt') + '"><b>' + (r.validated ? 'Signalé à la lecture (validé depuis)' : 'À vérifier') + ' :</b> ' + probs.join(' ') + (r.validated ? '' : ' Touchez une case pour la corriger, puis validez.') + '</div>' : (r.manualEntry ? '<div class="note">Saisie à la main : touchez les réponses de l\'élève.</div>' : '');
     const showImg = !!cor.img && !r.manualEntry;
     $('copy-fig').hidden = !showImg;
-    if (showImg) drawCopy(sc, ev); else $('copy-grid').innerHTML = gridHtml(sc);
-    if (showImg) $('copy-grid').innerHTML = '';
+    if (showImg) drawCopy(sc, ev);
+    // la grille est toujours affichée : grandes touches, toutes les cases modifiables (y compris les cases lues « sûres »)
+    $('copy-grid').innerHTML = '<p class="small muted" style="margin:0 0 6px">Réponses retenues : touchez une case pour la cocher ou la décocher. ✎ = corrigée à la main.</p>' + gridHtml(sc);
     const labels = labelsOf(sc.tpl), L = id => labels[id];
     $('copy-table').innerHTML = sc.questions.map(q => {
       const tq = sc.tpl.questions.find(x => x.id === q.id);
@@ -2165,7 +2166,7 @@ function gridHtml(sc) {
   const labels = labelsOf(sc.tpl);
   return '<div class="qlist">' + sc.tpl.questions.map(q => '<div class="q"><div class="num">' + q.id + '</div><div class="body"><div class="seg">' + q.boxes.map(id => {
     const b = sc.boxes[id], eff = b.manual || b.state;
-    return '<button type="button" data-gbox="' + id + '" aria-pressed="' + (eff === 'coche') + '"' + (eff === 'doute' ? ' style="border-color:var(--doubt)"' : '') + '>' + labels[id] + '</button>';
+    return '<button type="button" data-gbox="' + id + '" aria-pressed="' + (eff === 'coche') + '"' + (eff === 'doute' ? ' style="border-color:var(--doubt);border-width:2px"' : '') + '>' + labels[id] + (b.manual ? ' ✎' : eff === 'doute' ? ' ?' : '') + '</button>';
   }).join('') + '</div></div></div>').join('') + '</div>';
 }
 function drawCopy(sc, ev) {
@@ -2190,10 +2191,10 @@ function drawCopy(sc, ev) {
 function toggleBox(id, cycle) {
   const r = curResult(); if (!r) return;
   const before = r.manual[id] || null, read = (r.boxes[id] || {}).state || 'vide';
-  let next;
-  if (cycle) next = !before ? 'coche' : before === 'coche' ? 'vide' : null;   // photo : auto → cochée → vide → auto
-  else next = (before || read) === 'coche' ? 'vide' : 'coche';               // grille : bascule
-  if (next && !r.manualEntry && next === read) next = null;
+  // bascule simple, quelle que soit la lecture (sûre ou non) : cochée ↔ vide.
+  // Si l'on revient à ce que la lecture avait trouvé, la correction manuelle disparaît.
+  let next = (before || read) === 'coche' ? 'vide' : 'coche';
+  if (!r.manualEntry && next === read) next = null;
   if (next) r.manual[id] = next; else delete r.manual[id];
   r.log.push({ date: new Date().toISOString(), box: +id, lu: read, avant: before, apres: next });
   r.updated = new Date().toISOString(); app.state.sessions[r.sessionId].updated = r.updated;
