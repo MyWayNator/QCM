@@ -714,7 +714,8 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
   }
 
   /** Construit un modèle à partir d'un exemplaire corrigé. */
-  function buildTemplate(cv, rgba) {
+  /** opts.states : { idCase: { state, fill } } — réponses relevées ailleurs (page « corrigé » d'un PDF), appliquées avant le regroupement. */
+  function buildTemplate(cv, rgba, opts = {}) {
     const p = prepare(cv, rgba, null); if (p.error) return p;
     const boxes = detectBoxes(cv, p.warped).map((b, i) => Object.assign(b, { id: i + 1 }));
     const ctx = makeMeasureCtx(cv, p.warped);
@@ -727,6 +728,7 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
       // lettre « O » dans un mot : de l'encre collée à droite ET à gauche (les cases de réponse sont séparées du texte par une espace)
       else if (b.shape === 'circle' && b.fill > 0.12 && glued(ctx, b)) boxes.splice(i, 1);
     }
+    if (opts.states) for (const b of boxes) { const x = opts.states[b.id]; if (x) { b.state = x.state; b.fill = x.fill; } else { b.state = 'vide'; b.fill = 0; } }
     const byId = Object.fromEntries(boxes.map(b => [b.id, b]));
     let questions = splitTableCells(cv, ctx, groupQuestions(boxes), byId);
     freeMeasureCtx(ctx);
@@ -738,6 +740,13 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
       if (q.type !== 'single' || p.type !== 'single' || q.correct.length || q._cell || p._cell) continue;
       const yq = byId[q.boxes[0]].y, yp = Math.max(...p.boxes.map(id => byId[id].y)), h = byId[q.boxes[0]].h;
       if (yq - yp < 3.5 * h) { p.boxes.push(...q.boxes); questions.splice(i, 1); }
+    }
+    // … ou juste au-dessus d'une ligne qui contient la bonne réponse (la bonne réponse est sur la 2e ligne)
+    for (let i = 0; i < questions.length - 1; i++) {
+      const q = questions[i], n = questions[i + 1];
+      if (q.type !== 'single' || n.type !== 'single' || q.correct.length || !n.correct.length || q._cell || n._cell) continue;
+      const yq = Math.max(...q.boxes.map(id => byId[id].y)), yn = byId[n.boxes[0]].y, h = byId[n.boxes[0]].h;
+      if (yn - yq < 3.5 * h) { n.boxes.unshift(...q.boxes); questions.splice(i, 1); i--; }
     }
     questions.forEach((q, i) => { q.id = i + 1; delete q._cell; });
     const r = n => Math.round(n * 10) / 10;
@@ -1288,7 +1297,9 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
 
   /** Regroupe des repères en sujets (4 repères chacun), quelle que soit la disposition sur la page. */
   function groupMarkerSets(cands) {
-    const left = cands.slice(), sets = [];
+    // les repères sont les plus gros carrés pleins de la page (une case noircie d'un corrigé est bien plus petite)
+    const maxS = Math.max(0, ...cands.map(c => c.s));
+    const left = cands.filter(c => c.s > 0.7 * maxS), sets = [];
     while (left.length >= 4) {
       left.sort((a, b) => (a.y - b.y) || (a.x - b.x));
       const tl = left[0], tol = tl.s * 1.5;
@@ -1320,6 +1331,15 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
       const toPt = p => ({ x: p.x / RENDER_SCALE, y: H - p.y / RENDER_SCALE, s: p.s / RENDER_SCALE });
       // regroupement en coordonnées image (y vers le bas = ordre de lecture), puis conversion en points PDF
       const sets = groupMarkerSets(mk.cands || []).map(st => ({ tl: toPt(st.tl), tr: toPt(st.tr), br: toPt(st.br), bl: toPt(st.bl), s: st.s / RENDER_SCALE }));
+      // la zone du QR code (sous le repère haut-gauche) doit être vide : sinon le QR recouvrirait le sujet
+      const g = ctx.getImageData(0, 0, c.width, c.height).data, mm = RENDER_SCALE * MM;
+      for (const st of sets) {
+        const half = st.s * RENDER_SCALE / 2, tlx = st.tl.x * RENDER_SCALE, tly = (H - st.tl.y) * RENDER_SCALE;
+        const x0 = Math.round(tlx - half), x1 = Math.round(tlx - half + (QR_MM + 1) * mm), y0 = Math.round(tly + half + 3 * mm), y1 = Math.round(tly + half + (4 + QR_MM + 1) * mm);
+        let dark = 0, n = 0;
+        for (let y = Math.max(0, y0); y < Math.min(c.height, y1); y += 2) for (let x = Math.max(0, x0); x < Math.min(c.width, x1); x += 2) { const k = (y * c.width + x) * 4; n++; if (g[k] + g[k + 1] + g[k + 2] < 3 * 150) dark++; }
+        st.qrFree = n > 0 && dark / n < 0.003;
+      }
       pages.push({ index: i - 1, width: page.view[2] - page.view[0], height: H, slots: sets, thumb: c.toDataURL('image/jpeg', 0.6) });
     }
     return { numPages: doc.numPages, pages };
@@ -1338,6 +1358,17 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
       await page.render({ canvasContext: ctx, viewport: vp }).promise;
       yield { canvas: c, index: i, total: doc.numPages };
     }
+  }
+
+  /** Rendu d'une page du PDF (pour construire le modèle à partir des pages vierge et corrigé). */
+  async function renderPage(bytes, index, scale = 2.5) {
+    const { pdfjs } = await libs();
+    const doc = await pdfjs.getDocument({ data: bytes.slice(0) }).promise;
+    const page = await doc.getPage(index + 1), vp = page.getViewport({ scale });
+    const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+    const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+    await page.render({ canvasContext: ctx, viewport: vp }).promise;
+    return c;
   }
 
   /** Texte compatible avec les polices standard du PDF (WinAnsi) : on retire seulement ce qui n'y entre pas. */
@@ -1431,7 +1462,7 @@ textarea { width: 100%; box-sizing: border-box; font: 0.75rem var(--f-mono); min
     return c;
   }
 
-  root.QCMPrint = { libs, jsQR, pdfPages, analyzeSubjectPdf, buildClassPdf, renderFirstPage, groupMarkerSets, qrPayload, parsePayload, LIBS, QR_MM };
+  root.QCMPrint = { libs, jsQR, pdfPages, renderPage, analyzeSubjectPdf, buildClassPdf, renderFirstPage, groupMarkerSets, qrPayload, parsePayload, LIBS, QR_MM };
 })(typeof self !== 'undefined' ? self : globalThis);
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@techstark/opencv-js@5.0.0-release.1/dist/opencv.js" async id="cv-script"></script>
@@ -1676,7 +1707,7 @@ $('ev-head').addEventListener('change', async e => {
     nev.subject = { name: f.name, data: await blobToDataURL(f) };
     await persist(); st.printOpen = true;
     await selectEvaluation(nev.id);
-    msg('ref-status', 'ok', '<b>Évaluation créée.</b> Préparez les copies ci-dessous. Vous photographierez le corrigé plus tard.');
+    if (!D.readyLabels(nev).length) msg('ref-status', 'ok', '<b>Évaluation créée.</b> Préparez les copies ci-dessous. Vous photographierez le corrigé plus tard, ou ajoutez au PDF une page corrigée par version.');
     return;
   }
   if (t.id === 'ev-pick') { st.pending = null; if (t.value === '__new' || !t.value) await selectEvaluation(null); else await selectEvaluation(t.value); return; }
@@ -2342,14 +2373,95 @@ async function analyzeSubject(ev) {
   pr.busy = true; renderPrint();
   try { pr.analysis = await P.analyzeSubjectPdf(cv, Q, dataURLToBytes(ev.subject.data)); pr.error = null; }
   catch (e) { pr.error = e.message || String(e); }
+  // pages « corrigé » (cases noircies) : lues pour construire les modèles, jamais imprimées
+  pr.keys = null; pr.keysOffer = null;
+  if (pr.analysis && !ev.subject.keyPages && pr.analysis.pages.some(p => p.slots.length === 1)) {
+    pr.busyText = 'Lecture des corrigés du PDF…'; renderPrint();
+    try { pr.keys = await readPdfKeys(ev); } catch (e) { pr.keys = null; }
+    pr.busyText = null;
+  }
   pr.busy = false;
-  // correspondance page → version : page i = version A, B, … (pages sans repère ignorées)
-  if (pr.analysis && !ev.subject.pageOf) {
+  // correspondance page → version : page i = version A, B, … (pages sans repère et pages corrigées exclues)
+  const keyPages = new Set(pr.keys ? pr.keys.pairs.map(p => p.key) : Object.keys(ev.subject.keyPages || {}).map(Number));
+  if (pr.analysis && (!ev.subject.pageOf || Object.values(ev.subject.pageOf).some(i => keyPages.has(i)))) {
     const pageOf = {}; let k = 0;
-    for (const pg of pr.analysis.pages) if (pg.slots.length) pageOf['ABCDEFGH'[k++]] = pg.index;
+    for (const pg of pr.analysis.pages) if (pg.slots.length && !keyPages.has(pg.index)) pageOf['ABCDEFGH'[k++]] = pg.index;
     ev.subject.pageOf = pageOf; persistSoon();
   }
+  if (pr.keys) {
+    // mémorisé : on ne relit pas les corrigés à chaque ouverture de l'évaluation
+    ev.subject.keyPages = {};
+    for (const p of pr.keys.pairs) { const l = Object.keys(ev.subject.pageOf).find(x => ev.subject.pageOf[x] === p.blank); if (l) ev.subject.keyPages[p.key] = l; }
+    persistSoon();
+  }
+  if (pr.keys && pr.keys.pairs.length) {
+    // modèles : appliqués d'office aux versions sans corrigé ; sinon proposés
+    const labels = Object.keys(ev.subject.pageOf).filter(l => pr.keys.byBlank[ev.subject.pageOf[l]]);
+    const missing = labels.filter(l => !ev.versions[l] || !ev.versions[l].tpl);
+    if (missing.length === labels.length) await applyPdfKeys(ev); else pr.keysOffer = labels;
+  }
   renderPrint();
+}
+
+/** Lit les pages du PDF : lesquelles sont vierges, lesquelles sont des corrigés, et quel corrigé va avec quelle page. */
+async function readPdfKeys(ev) {
+  const bytes = dataURLToBytes(ev.subject.data), pages = pr.analysis.pages.filter(p => p.slots.length === 1);
+  const small = w => { const g = new cv.Mat(), o = new cv.Mat(); cv.cvtColor(w, g, cv.COLOR_RGBA2GRAY); cv.resize(g, o, new cv.Size(300, Math.round(300 * w.rows / w.cols)), 0, 0, cv.INTER_AREA); g.delete(); return o; };
+  const T = {};
+  for (const pg of pages) {
+    const c = await P.renderPage(bytes, pg.index, 2.5), m = cv.imread(c);
+    const r = Q.buildTemplate(cv, m);
+    if (r.error) { m.delete(); continue; }
+    T[pg.index] = { mat: m, tpl: r.template, small: small(r.warped), n: r.template.boxes.filter(b => b.refState === 'coche').length };
+    r.warped.delete();
+  }
+  const idx = Object.keys(T).map(Number), blanks = idx.filter(i => T[i].n === 0), keys = idx.filter(i => T[i].n > 0);
+  const out = { pairs: [], byBlank: {}, problems: [] };
+  for (const k of keys) {
+    let best = null;
+    for (const b of blanks) {
+      const rd = Q.readCopy(cv, T[k].mat, T[b].tpl); if (rd.error) continue;
+      const bad = Object.values(rd.boxes).filter(x => x.lost || x.state === 'doute').length;
+      const ks = small(rd.warped), kk = new cv.Mat(), d = new cv.Mat();
+      cv.resize(ks, kk, new cv.Size(T[b].small.cols, T[b].small.rows)); cv.absdiff(kk, T[b].small, d);
+      const diff = cv.mean(d)[0]; ks.delete(); kk.delete(); d.delete();
+      const score = bad * 1000 + diff;
+      if (!best || score < best.score) best = { b, bad, diff, score, states: Object.fromEntries(Object.values(rd.boxes).map(x => [x.id, { state: x.state, fill: x.fill }])), img: canvasJpeg(matToCanvas(rd.warped), 1300, 0.85) };
+      rd.warped.delete();
+    }
+    if (!best || best.bad > T[best.b].tpl.boxes.length * 0.1) { out.problems.push('La page ' + (k + 1) + ' ressemble à un corrigé, mais ne correspond à aucune page vierge.'); continue; }
+    if (out.byBlank[best.b]) { out.problems.push('Les pages ' + (out.byBlank[best.b].key + 1) + ' et ' + (k + 1) + ' semblent être deux corrigés de la même page ' + (best.b + 1) + '.'); continue; }
+    const fin = Q.buildTemplate(cv, T[best.b].mat, { states: best.states });
+    if (fin.warped) fin.warped.delete();
+    const nd = Object.values(best.states).filter(x => x.state === 'doute').length;
+    if (nd) out.problems.push('Corrigé page ' + (k + 1) + ' : ' + nd + ' case' + (nd > 1 ? 's' : '') + ' ni vide ni noire, à vérifier.');
+    out.byBlank[best.b] = { key: k, tpl: fin.template, img: best.img };
+    out.pairs.push({ key: k, blank: best.b });
+  }
+  for (const i of idx) { T[i].mat.delete(); T[i].small.delete(); }
+  return out;
+}
+/** Crée (ou remplace) les modèles des versions à partir des pages corrigées du PDF. */
+async function applyPdfKeys(ev) {
+  const K = pr.keys, pageOf = ev.subject.pageOf, labels = Object.keys(pageOf).sort().filter(l => K.byBlank[pageOf[l]]);
+  if (!labels.length) return;
+  await D.snapshot(app.state, 'avant la lecture des corrigés du PDF de « ' + ev.name + ' »');
+  const ref = K.byBlank[pageOf[labels[0]]];
+  ev.versions[labels[0]] = { tpl: ref.tpl, img: ref.img, fromPdf: true };
+  ev.sameLayout = true;
+  for (const l of labels.slice(1)) {
+    const x = K.byBlank[pageOf[l]];
+    const map = D.matchVersionBoxes(ref.tpl.boxes, x.tpl.boxes, 110, ref.tpl.geo.cw / x.tpl.geo.cw);
+    if (map) ev.versions[l] = { tpl: D.versionFromMatch(ref.tpl, map, x.tpl).tpl, img: x.img, fromPdf: true };
+    else { ev.versions[l] = { tpl: x.tpl, img: x.img, fromPdf: true }; ev.sameLayout = false; }
+  }
+  ev.updated = new Date().toISOString(); pr.keysOffer = null;
+  notesChanged(ev);
+  await persist();
+  st.pending = null;
+  await selectEvaluation(ev.id, labels[0]);
+  msg('ref-status', K.problems.length ? 'doubt' : 'ok', '<b>Corrigés lus dans le PDF</b> : version' + (labels.length > 1 ? 's ' : ' ') + labels.join(', ') + ', ' + plural(ref.tpl.boxes.length, 'case', 'cases') + ', ' + plural(ref.tpl.questions.length, 'question', 'questions') +
+    (labels.length > 1 ? (ev.sameLayout ? ' (mêmes cases pour toutes les versions)' : ' (dispositions différentes)') : '') + '. Vérifiez le découpage et réglez les points ci-dessous.' + (K.problems.length ? '<br>' + K.problems.map(eh).join('<br>') : ''));
 }
 
 function renderPrint() {
@@ -2364,19 +2476,25 @@ function renderPrint() {
   h += '<div style="display:flex;flex-direction:column;gap:6px"><span class="small"><b>1. Le sujet</b> : PDF exporté de Writer, une page par version, avec les quatre repères et le bandeau vide.</span>';
   if (ev.subject) h += '<div class="small">' + eh(ev.subject.name) + (pr.analysis ? ' · ' + plural(pr.analysis.numPages, 'page', 'pages') : '') + '</div>';
   h += '<div class="actions"><label class="btn small" for="in-subject">' + (ev.subject ? 'Changer de PDF' : 'Choisir le PDF du sujet') + '<input type="file" id="in-subject" accept="application/pdf,.pdf"></label></div>';
-  if (pr.busy) h += '<span class="busy">Recherche des repères dans le PDF…</span>';
+  if (pr.busy) h += '<span class="busy">' + (pr.busyText || 'Recherche des repères dans le PDF…') + '</span>';
   if (pr.error) h += '<div class="note bad"><b>PDF illisible.</b> ' + eh(pr.error) + '</div>';
   const A = pr.analysis, pageOf = (ev.subject && ev.subject.pageOf) || {};
   if (A) {
+    const keyOf = ev.subject.keyPages || {};
     h += '<div class="qlist">' + A.pages.map(pg => {
       const lab = Object.keys(pageOf).find(l => pageOf[l] === pg.index) || '';
       return '<div class="q" style="grid-template-columns:72px 1fr"><img src="' + pg.thumb + '" alt="Page ' + (pg.index + 1) + '" style="width:72px;border:1px solid var(--rule);border-radius:4px">' +
-        '<div class="body"><div class="line"><b>Page ' + (pg.index + 1) + '</b>' + (pg.slots.length ? '<span class="pill ok">' + plural(pg.slots.length, 'sujet repéré', 'sujets repérés') + '</span>' : '<span class="pill bad">aucun repère</span>') + '</div>' +
-        (pg.slots.length ? '<label class="small">Version <select data-page="' + pg.index + '"><option value="">ne pas utiliser</option>' + 'ABCDEFGH'.slice(0, Math.max(A.pages.length, D.versionLabels(ev).length)).split('').map(l => '<option value="' + l + '"' + (l === lab ? ' selected' : '') + '>' + l + '</option>').join('') + '</select></label>' : '<span class="small muted">Ajoutez les quatre carrés noirs aux coins du sujet.</span>') +
+        '<div class="body"><div class="line"><b>Page ' + (pg.index + 1) + '</b>' + (keyOf[pg.index] ? '<span class="pill ok">corrigé de la version ' + keyOf[pg.index] + '</span>' : pg.slots.length ? '<span class="pill ok">' + plural(pg.slots.length, 'sujet repéré', 'sujets repérés') + '</span>' : '<span class="pill bad">aucun repère</span>') + '</div>' +
+        (keyOf[pg.index] ? '<span class="small muted">Lu pour les bonnes réponses, jamais imprimé.</span>' :
+        pg.slots.length && pg.slots.some(x => x.qrFree === false) ? '<span class="small" style="color:var(--bad)">Pas de place pour le QR code : laissez un bandeau vide d\'environ 2,5 cm sous le repère haut-gauche.</span>' : '') +
+        (keyOf[pg.index] ? '' : pg.slots.length ? '<label class="small">Version <select data-page="' + pg.index + '"><option value="">ne pas utiliser</option>' + 'ABCDEFGH'.slice(0, Math.max(A.pages.length, D.versionLabels(ev).length)).split('').map(l => '<option value="' + l + '"' + (l === lab ? ' selected' : '') + '>' + l + '</option>').join('') + '</select></label>' : '<span class="small muted">Ajoutez les quatre carrés noirs aux coins du sujet.</span>') +
         '</div></div>';
     }).join('') + '</div>';
     const missing = Object.keys(pageOf).filter(l => !ev.versions[l] || !ev.versions[l].tpl);
-    if (missing.length) h += '<p class="small muted">Corrigé à photographier ensuite pour : version ' + missing.join(', ') + '. Ce n\'est pas nécessaire pour imprimer.</p>';
+    if (missing.length) h += '<p class="small muted">Corrigé à photographier ensuite pour : version ' + missing.join(', ') + '. Ce n\'est pas nécessaire pour imprimer. Vous pouvez aussi ajouter au PDF, après les sujets, une page corrigée par version (cases noircies).</p>';
+    if (Object.keys(keyOf).length && !pr.keysOffer && !pr.busy) h += '<div class="actions"><button class="btn small" type="button" id="btn-reread-keys">Relire les corrigés du PDF</button></div>';
+    if (pr.keysOffer) h += '<div class="note" style="display:flex;flex-direction:column;gap:8px"><span>Le PDF contient les corrigés des versions ' + pr.keysOffer.join(', ') + '.</span><div class="actions"><button class="btn small" type="button" id="btn-use-keys">Remplacer les corrigés actuels par ceux du PDF</button></div></div>';
+    if (Object.values(pageOf).some(i => A.pages[i] && A.pages[i].slots.some(x => x.qrFree === false))) h += '<div class="note bad small"><b>Le QR code recouvrirait le sujet.</b> Ajoutez dans Writer un bandeau vide d\'environ 2,5 cm sous les repères du haut, comme sur votre modèle « Ions et réaction ».</div>';
   }
   // 2. classes
   h += '<div style="display:flex;flex-direction:column;gap:6px"><span class="small"><b>2. Les classes</b> : touchez-en une ou plusieurs.</span>';
@@ -2395,7 +2513,8 @@ function renderPrint() {
     const labs = Object.keys(pageOf).sort();
     h += '<span class="small muted">' + plural(n, 'copie', 'copies') + (sel.length > 1 ? ', rangées classe par classe' : '') + (labs.length > 1 ? ', versions ' + labs.join(', ') + ' en alternance dans l\'ordre alphabétique' : '') + '.</span>';
     if (sel.some(c => c.students.some(s => dupIds.has(s.id) && !pr.unchecked.has(s.id)))) h += '<div class="note doubt small">Un doublon est coché : retirez-le dans l\'onglet Élèves ou décochez-le, sinon il recevra une copie.</div>';
-    h += '<div class="actions"><button class="btn primary" type="button" id="btn-make-pdf"' + (A && labs.length && n && !pr.busy ? '' : ' disabled') + '>Créer le PDF</button></div>';
+    const qrBlocked = A && Object.values(pageOf).some(i => A.pages[i] && A.pages[i].slots.some(x => x.qrFree === false));
+    h += '<div class="actions"><button class="btn primary" type="button" id="btn-make-pdf"' + (A && labs.length && n && !pr.busy && !qrBlocked ? '' : ' disabled') + '>Créer le PDF</button></div>';
   }
   h += '</div><div id="pr-result"></div></div></details>';
   z.innerHTML = h;
@@ -2427,6 +2546,8 @@ $('print-zone').addEventListener('change', async e => {
 });
 $('print-zone').addEventListener('click', async e => {
   const ev = curEval(), b = e.target.closest('button'); if (!b || !ev) return;
+  if (b.id === 'btn-use-keys') { await applyPdfKeys(ev); renderPrint(); return; }
+  if (b.id === 'btn-reread-keys') { delete ev.subject.keyPages; await analyzeSubject(ev); return; }
   if (b.dataset.cls != null) { if (pr.classes.has(b.dataset.cls)) pr.classes.delete(b.dataset.cls); else pr.classes.add(b.dataset.cls); pr.result = null; renderPrint(); return; }
   if (b.id === 'btn-make-pdf') {
     const sel = D.classesOf(app.state).filter(x => pr.classes.has(x.classe)); if (!sel.length) return;
